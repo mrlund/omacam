@@ -1,0 +1,382 @@
+#!/usr/bin/env bash
+# Crop a physical webcam into a v4l2loopback device named Omacam.
+# The Omarchy plugin starts and stops this; it is not a long-lived daemon
+# unless a meeting is using the virtual camera.
+set -euo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omacam"
+STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/omacam"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+PID_FILE="$STATE_DIR/ffmpeg.pid"
+LOG_FILE="$STATE_DIR/ffmpeg.log"
+PREVIEW_FILE="$STATE_DIR/preview.jpg"
+CARD_LABEL="Omacam"
+
+mkdir -p "$CONFIG_DIR" "$STATE_DIR"
+
+fail() {
+  echo "omacam: $*" >&2
+  exit 1
+}
+
+even() {
+  local n=$1
+  echo $(( n - (n % 2) ))
+}
+
+default_config() {
+  cat <<'EOF'
+{
+  "inputDevice": "auto",
+  "mode4k": true,
+  "zoom": 30,
+  "moveUp": 30,
+  "moveRight": 100,
+  "outputWidth": 1920,
+  "outputHeight": 1080,
+  "framerate": 30,
+  "scaler": "lanczos"
+}
+EOF
+}
+
+ensure_config() {
+  if [[ ! -f $CONFIG_FILE ]]; then
+    default_config > "$CONFIG_FILE"
+  fi
+}
+
+read_config() {
+  ensure_config
+  python3 - "$CONFIG_FILE" <<'PY'
+import json, sys
+path = sys.argv[1]
+defaults = {
+    "inputDevice": "auto",
+    "mode4k": True,
+    "zoom": 30,
+    "moveUp": 30,
+    "moveRight": 100,
+    "outputWidth": 1920,
+    "outputHeight": 1080,
+    "framerate": 30,
+    "scaler": "lanczos",
+}
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+out = dict(defaults)
+out.update({k: data[k] for k in defaults if k in data})
+print(json.dumps(out))
+PY
+}
+
+cfg_get() {
+  python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], ""))' "$1" "$2"
+}
+
+loopback_loaded() {
+  [[ -d /sys/module/v4l2loopback ]]
+}
+
+list_devices_raw() {
+  v4l2-ctl --list-devices 2>/dev/null || true
+}
+
+find_loopback() {
+  python3 - <<'PY'
+import re, subprocess
+text = subprocess.check_output(["v4l2-ctl", "--list-devices"], text=True, stderr=subprocess.DEVNULL)
+blocks = re.split(r"\n\s*\n", text)
+needles = ("omacam", "cropped webcam", "dummy video device", "v4l2loopback")
+for block in blocks:
+    head = block.splitlines()[0].lower() if block.strip() else ""
+    if any(n in head for n in needles):
+        m = re.search(r"/dev/video\d+", block)
+        if m:
+            print(m.group(0))
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+find_input() {
+  local preferred=$1
+  if [[ $preferred != auto && -n $preferred && -e $preferred ]]; then
+    printf '%s\n' "$preferred"
+    return 0
+  fi
+  python3 - <<'PY'
+import re, subprocess
+text = subprocess.check_output(["v4l2-ctl", "--list-devices"], text=True, stderr=subprocess.DEVNULL)
+blocks = re.split(r"\n\s*\n", text)
+skip = ("omacam", "cropped webcam", "dummy video device", "v4l2loopback")
+for block in blocks:
+    lines = [ln for ln in block.splitlines() if ln.strip()]
+    if not lines:
+        continue
+    head = lines[0].lower()
+    if any(n in head for n in skip):
+        continue
+    if "video capture" not in block.lower() and "/dev/video" not in block:
+        continue
+    for ln in lines[1:]:
+        m = re.search(r"/dev/video\d+", ln)
+        if m:
+            print(m.group(0))
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+pid_running() {
+  local pid=$1
+  [[ -n $pid && -d /proc/$pid ]] || return 1
+  local cmd
+  cmd=$(ps -p "$pid" -o args= 2>/dev/null || true)
+  [[ $cmd == *ffmpeg* ]]
+}
+
+current_pid() {
+  if [[ -f $PID_FILE ]]; then
+    tr -d ' \n' < "$PID_FILE"
+  fi
+}
+
+stop_stream() {
+  local pid
+  pid=$(current_pid || true)
+  if pid_running "$pid"; then
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      pid_running "$pid" || break
+      sleep 0.1
+    done
+    pid_running "$pid" && kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+}
+
+compute_viewport() {
+  python3 - "$1" <<'PY'
+import json, sys
+cfg = json.loads(sys.argv[1])
+mode4k = bool(cfg.get("mode4k", True))
+base_w, base_h = (3840, 2160) if mode4k else (1920, 1080)
+zoom = float(cfg.get("zoom", 0) or 0)
+move_up = int(cfg.get("moveUp", 0) or 0)
+move_right = int(cfg.get("moveRight", 0) or 0)
+
+def even(n):
+    n = int(n)
+    return n - (n % 2)
+
+factor = 1 - (zoom / 100.0)
+factor = min(1.0, max(0.2, factor))
+view_w = even(max(2, min(base_w, int(base_w * factor))))
+view_h = even(max(2, min(base_h, int(base_h * factor))))
+center_x = even((base_w - view_w) // 2)
+center_y = even((base_h - view_h) // 2)
+x = even(center_x + move_right)
+y = even(center_y - move_up)
+x = max(0, min(x, base_w - view_w))
+y = max(0, min(y, base_h - view_h))
+print(f"{base_w} {base_h} {view_w} {view_h} {x} {y}")
+PY
+}
+
+print_status() {
+  local running=false
+  local pid=""
+  local err=""
+  local input=""
+  local virtual=""
+  local loaded=false
+  loopback_loaded && loaded=true
+  pid=$(current_pid || true)
+  if pid_running "$pid"; then
+    running=true
+  else
+    pid=""
+    rm -f "$PID_FILE"
+  fi
+  if virtual=$(find_loopback 2>/dev/null); then
+    :
+  else
+    virtual=""
+  fi
+  local cfg
+  cfg=$(read_config)
+  if input=$(find_input "$(cfg_get "$cfg" inputDevice)" 2>/dev/null); then
+    :
+  else
+    input=""
+  fi
+  if [[ $running != true && -f $LOG_FILE ]]; then
+    err=$(tail -n 8 "$LOG_FILE" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')
+  fi
+  python3 - "$running" "$pid" "$virtual" "$input" "$loaded" "$err" "$CONFIG_FILE" <<'PY'
+import json, sys
+running, pid, virtual, inp, loaded, err, cfg_path = sys.argv[1:]
+print(json.dumps({
+    "running": running == "true",
+    "pid": int(pid) if pid.isdigit() else None,
+    "virtualDevice": virtual or "",
+    "inputDevice": inp or "",
+    "loopbackLoaded": loaded == "true",
+    "error": err.strip(),
+    "configPath": cfg_path,
+    "ffmpeg": True,
+}))
+PY
+}
+
+cmd_start() {
+  command -v ffmpeg >/dev/null || fail "ffmpeg is not installed"
+  command -v v4l2-ctl >/dev/null || fail "v4l2-ctl is not installed (v4l2loopback-utils)"
+  local cfg virtual input
+  cfg=$(read_config)
+  virtual=$(find_loopback) || fail "No Omacam loopback device found. See the README for the one-time sudo setup."
+  input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
+
+  stop_stream
+
+  local base_w base_h view_w view_h x y
+  read -r base_w base_h view_w view_h x y <<<"$(compute_viewport "$cfg")"
+  local out_w out_h fps scaler mode4k
+  out_w=$(cfg_get "$cfg" outputWidth)
+  out_h=$(cfg_get "$cfg" outputHeight)
+  fps=$(cfg_get "$cfg" framerate)
+  scaler=$(cfg_get "$cfg" scaler)
+  mode4k=$(cfg_get "$cfg" mode4k)
+
+  local input_flags=(-f v4l2 -thread_queue_size 1024)
+  if [[ $mode4k == True || $mode4k == true ]]; then
+    input_flags+=(-input_format mjpeg)
+    v4l2-ctl -d "$input" --set-fmt-video=width="$base_w",height="$base_h",pixelformat=MJPG >/dev/null 2>&1 || true
+  fi
+  input_flags+=(-video_size "${base_w}x${base_h}" -framerate "$fps" -i "$input")
+
+  local vf="crop=${view_w}:${view_h}:${x}:${y},scale=${out_w}:${out_h}:flags=${scaler}:in_range=pc:out_range=pc,format=yuv422p"
+
+  : > "$LOG_FILE"
+  # New session so a shell / plugin restart does not kill the pipeline.
+  setsid ffmpeg -hide_banner -nostdin -loglevel error \
+    "${input_flags[@]}" \
+    -vf "$vf" \
+    -f v4l2 -pix_fmt yuyv422 "$virtual" \
+    </dev/null >>"$LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+  sleep 0.4
+  if ! pid_running "$pid"; then
+    rm -f "$PID_FILE"
+    fail "ffmpeg exited immediately. $(tr '\n' ' ' < "$LOG_FILE")"
+  fi
+  print_status
+}
+
+cmd_snapshot() {
+  command -v ffmpeg >/dev/null || fail "ffmpeg is not installed"
+  local dest=${1:-$PREVIEW_FILE}
+  local cfg input
+  cfg=$(read_config)
+  input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
+
+  local base_w base_h view_w view_h x y
+  read -r base_w base_h view_w view_h x y <<<"$(compute_viewport "$cfg")"
+  local mode4k
+  mode4k=$(cfg_get "$cfg" mode4k)
+
+  local input_flags=(-f v4l2 -thread_queue_size 512)
+  if [[ $mode4k == True || $mode4k == true ]]; then
+    input_flags+=(-input_format mjpeg)
+  fi
+  input_flags+=(-video_size "${base_w}x${base_h}" -i "$input")
+
+  mkdir -p "$(dirname "$dest")"
+  ffmpeg -hide_banner -nostdin -loglevel error -y \
+    "${input_flags[@]}" \
+    -frames:v 1 -q:v 3 \
+    "$dest" </dev/null
+  python3 - "$dest" "$base_w" "$base_h" <<'PY'
+import json, os, sys
+path, w, h = sys.argv[1:]
+print(json.dumps({
+    "path": os.path.abspath(path),
+    "width": int(w),
+    "height": int(h),
+    "exists": os.path.isfile(path),
+    "bytes": os.path.getsize(path) if os.path.isfile(path) else 0,
+}))
+PY
+}
+
+cmd_doctor() {
+  local ffmpeg_ok=false
+  local ctl_ok=false
+  local loaded=false
+  local virtual=""
+  local input=""
+  command -v ffmpeg >/dev/null && ffmpeg_ok=true
+  command -v v4l2-ctl >/dev/null && ctl_ok=true
+  loopback_loaded && loaded=true
+  virtual=$(find_loopback 2>/dev/null || true)
+  local cfg
+  cfg=$(read_config)
+  input=$(find_input "$(cfg_get "$cfg" inputDevice)" 2>/dev/null || true)
+  python3 - "$ffmpeg_ok" "$ctl_ok" "$loaded" "$virtual" "$input" <<'PY'
+import json, sys
+ffmpeg_ok, ctl_ok, loaded, virtual, inp = sys.argv[1:]
+missing = []
+if ffmpeg_ok != "true":
+    missing.append("ffmpeg")
+if ctl_ok != "true":
+    missing.append("v4l2loopback-utils")
+if loaded != "true" and not virtual:
+    missing.append("v4l2loopback module (one-time sudo setup in the README)")
+print(json.dumps({
+    "ffmpeg": ffmpeg_ok == "true",
+    "v4l2ctl": ctl_ok == "true",
+    "loopbackLoaded": loaded == "true",
+    "virtualDevice": virtual or "",
+    "inputDevice": inp or "",
+    "ready": ffmpeg_ok == "true" and ctl_ok == "true" and bool(virtual) and bool(inp),
+    "missing": missing,
+}))
+PY
+}
+
+usage() {
+  cat <<EOF
+Usage: omacam <command>
+
+  start       Start the cropped virtual camera (background ffmpeg)
+  stop        Stop it
+  status      JSON status
+  snapshot    Grab a still of the full physical frame for the framer
+  doctor      JSON dependency check
+  config      Print the config JSON path and contents
+EOF
+}
+
+cmd=${1:-}
+shift || true
+case "$cmd" in
+  start) cmd_start ;;
+  stop) stop_stream; print_status ;;
+  status) print_status ;;
+  snapshot) cmd_snapshot "${1:-}" ;;
+  doctor) cmd_doctor ;;
+  config)
+    ensure_config
+    echo "$CONFIG_FILE"
+    cat "$CONFIG_FILE"
+    ;;
+  -h|--help|"") usage ;;
+  *) fail "unknown command: $cmd" ;;
+esac

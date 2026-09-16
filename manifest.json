@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "mrlund.omacam",
+  "name": "Omacam",
+  "version": "1.0.0",
+  "author": "Martin Lund",
+  "license": "MIT",
+  "description": "Crop a 4K webcam into a sharp 1080p virtual camera, with a visual framer and a bar toggle.",
+  "kinds": [
+    "service",
+    "bar-widget",
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml",
+    "overlay": "Overlay.qml"
+  },
+  "barWidget": {
+    "displayName": "Omacam",
+    "description": "Start and stop the cropped webcam, or open the framer overlay.",
+    "category": "Video",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

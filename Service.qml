@@ -1,0 +1,261 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import "Model.js" as Model
+
+Item {
+  id: root
+
+  property var shell: null
+  property var manifest: null
+  property var settings: ({})
+
+  readonly property string home: Quickshell.env("HOME")
+  readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"
+  readonly property string pluginDir: manifest && manifest.__sourceDir
+    ? manifest.__sourceDir
+    : (home + "/.config/omarchy/plugins/mrlund.omacam")
+  readonly property string scriptPath: pluginDir + "/scripts/omacam"
+  readonly property string configPath: home + "/.config/omacam/config.json"
+  readonly property string previewPath: runtimeDir + "/omacam/preview.jpg"
+
+  property var config: Model.mergeConfig({})
+  property bool configLoaded: false
+  property bool running: false
+  property bool busy: false
+  property bool previewing: false
+  property bool resumeAfterPreview: false
+  property string lastError: ""
+  property string statusText: "Off"
+  property string inputDevice: ""
+  property string virtualDevice: ""
+  property bool loopbackLoaded: false
+  property bool ready: false
+  property string previewUrl: ""
+  property int previewSerial: 0
+  property int sourceWidth: 3840
+  property int sourceHeight: 2160
+  readonly property bool capturing: snapshotProcess.running
+
+  readonly property var sourceSize: Model.baseSize(config.mode4k === true)
+
+  function notify(title, body) {
+    Quickshell.execDetached(["omarchy-notification-send", "--app-name", "Omacam", "-g", "󰖠", title, body || ""])
+  }
+
+  function applyStatus(raw) {
+    var parsed = Model.parseJson(raw, null)
+    if (!parsed) return
+    running = parsed.running === true
+    inputDevice = String(parsed.inputDevice || "")
+    virtualDevice = String(parsed.virtualDevice || "")
+    loopbackLoaded = parsed.loopbackLoaded === true
+    if (parsed.error && !running) lastError = Model.elide(parsed.error, 180)
+    else if (running) lastError = ""
+    statusText = running ? "Live" : (lastError ? "Error" : "Off")
+  }
+
+  function applyDoctor(raw) {
+    var parsed = Model.parseJson(raw, null)
+    if (!parsed) return
+    ready = parsed.ready === true
+    loopbackLoaded = parsed.loopbackLoaded === true
+    inputDevice = String(parsed.inputDevice || inputDevice)
+    virtualDevice = String(parsed.virtualDevice || virtualDevice)
+    if (!parsed.ready && parsed.missing && parsed.missing.length)
+      lastError = "Need: " + parsed.missing.join(", ")
+  }
+
+  function writeConfig(next) {
+    config = Model.mergeConfig(next || config)
+    var payload = JSON.stringify(config, null, 2) + "\n"
+    configFile.setText(payload)
+  }
+
+  function setCrop(zoom, moveUp, moveRight) {
+    var next = Model.mergeConfig(config)
+    next.zoom = zoom
+    next.moveUp = moveUp
+    next.moveRight = moveRight
+    config = Model.mergeConfig(next)
+  }
+
+  function setMode4k(enabled) {
+    var next = Model.mergeConfig(config)
+    next.mode4k = enabled === true
+    config = Model.mergeConfig(next)
+    sourceWidth = Model.baseSize(config.mode4k).w
+    sourceHeight = Model.baseSize(config.mode4k).h
+  }
+
+  function refresh() {
+    if (statusProcess.running) return
+    statusProcess.command = [scriptPath, "status"]
+    statusProcess.running = true
+  }
+
+  function doctor() {
+    if (doctorProcess.running) return
+    doctorProcess.command = [scriptPath, "doctor"]
+    doctorProcess.running = true
+  }
+
+  function start() {
+    if (busy) return
+    writeConfig(config)
+    busy = true
+    lastError = ""
+    startProcess.command = [scriptPath, "start"]
+    startProcess.running = true
+  }
+
+  function stop() {
+    if (busy) return
+    busy = true
+    stopProcess.command = [scriptPath, "stop"]
+    stopProcess.running = true
+  }
+
+  function toggle() {
+    if (running) stop()
+    else start()
+  }
+
+  function beginPreview() {
+    previewing = true
+    resumeAfterPreview = running
+    if (running) {
+      busy = true
+      stopProcess.command = [scriptPath, "stop"]
+      stopProcess.running = true
+    } else {
+      takeSnapshot()
+    }
+  }
+
+  function finishPreview(shouldStart) {
+    previewing = false
+    if (shouldStart || resumeAfterPreview) {
+      resumeAfterPreview = false
+      start()
+    } else {
+      resumeAfterPreview = false
+    }
+  }
+
+  function takeSnapshot() {
+    if (snapshotProcess.running) return
+    sourceWidth = sourceSize.w
+    sourceHeight = sourceSize.h
+    writeConfig(config)
+    snapshotProcess.command = [scriptPath, "snapshot", previewPath]
+    snapshotProcess.running = true
+  }
+
+  Component.onCompleted: {
+    doctor()
+    refresh()
+  }
+
+  Timer {
+    id: poll
+    interval: running || busy ? 2000 : 8000
+    repeat: true
+    running: true
+    onTriggered: root.refresh()
+  }
+
+  FileView {
+    id: configFile
+    path: root.configPath
+    watchChanges: true
+    onLoaded: {
+      root.config = Model.mergeConfig(Model.parseJson(text(), {}))
+      root.sourceWidth = Model.baseSize(root.config.mode4k).w
+      root.sourceHeight = Model.baseSize(root.config.mode4k).h
+      root.configLoaded = true
+    }
+    onLoadFailed: {
+      root.config = Model.mergeConfig({})
+      root.configLoaded = true
+      root.writeConfig(root.config)
+    }
+  }
+
+  Process {
+    id: statusProcess
+    running: false
+    stdout: StdioCollector { id: statusOut; waitForEnd: true }
+    stderr: StdioCollector { id: statusErr; waitForEnd: true }
+    onExited: function(code) {
+      if (code === 0) root.applyStatus(statusOut.text)
+      else if (!root.running) root.lastError = Model.elide(statusErr.text || statusOut.text, 180)
+    }
+  }
+
+  Process {
+    id: doctorProcess
+    running: false
+    stdout: StdioCollector { id: doctorOut; waitForEnd: true }
+    stderr: StdioCollector { id: doctorErr; waitForEnd: true }
+    onExited: function(code) {
+      if (code === 0) root.applyDoctor(doctorOut.text)
+      else root.lastError = Model.elide(doctorErr.text || doctorOut.text, 180)
+    }
+  }
+
+  Process {
+    id: startProcess
+    running: false
+    stdout: StdioCollector { id: startOut; waitForEnd: true }
+    stderr: StdioCollector { id: startErr; waitForEnd: true }
+    onExited: function(code) {
+      root.busy = false
+      if (code === 0) {
+        root.applyStatus(startOut.text)
+        root.lastError = ""
+      } else {
+        root.running = false
+        root.lastError = Model.elide(startErr.text || startOut.text, 220)
+        root.notify("Omacam could not start", root.lastError)
+      }
+      root.refresh()
+    }
+  }
+
+  Process {
+    id: stopProcess
+    running: false
+    stdout: StdioCollector { id: stopOut; waitForEnd: true }
+    stderr: StdioCollector { id: stopErr; waitForEnd: true }
+    onExited: function(code) {
+      root.busy = false
+      if (code === 0) root.applyStatus(stopOut.text)
+      root.running = false
+      root.statusText = "Off"
+      if (code !== 0) root.lastError = Model.elide(stopErr.text || stopOut.text, 180)
+      root.refresh()
+      if (root.previewing) root.takeSnapshot()
+    }
+  }
+
+  Process {
+    id: snapshotProcess
+    running: false
+    stdout: StdioCollector { id: snapOut; waitForEnd: true }
+    stderr: StdioCollector { id: snapErr; waitForEnd: true }
+    onExited: function(code) {
+      if (code === 0) {
+        var parsed = Model.parseJson(snapOut.text, {})
+        root.sourceWidth = Number(parsed.width || root.sourceSize.w)
+        root.sourceHeight = Number(parsed.height || root.sourceSize.h)
+        root.previewSerial += 1
+        root.previewUrl = "file://" + root.previewPath + "?t=" + root.previewSerial
+        root.lastError = ""
+      } else {
+        root.previewUrl = ""
+        root.lastError = Model.elide(snapErr.text || snapOut.text, 220)
+      }
+    }
+  }
+}
