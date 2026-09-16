@@ -99,15 +99,15 @@ Item {
   }
 
   function close() {
+    if (root.opened && !root.applied && root.service) {
+      root.service.writeConfig(root.savedConfig)
+      root.service.finishPreview(false)
+    }
     root.opened = false
   }
 
   function dismiss() {
-    if (!applied && service) {
-      service.writeConfig(savedConfig)
-      service.finishPreview(false)
-    }
-    root.opened = false
+    root.close()
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "mrlund.omacam")
   }
@@ -118,9 +118,7 @@ Item {
     pushDraftToService()
     service.writeConfig(service.config)
     service.finishPreview(true)
-    root.opened = false
-    if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "mrlund.omacam")
+    root.dismiss()
   }
 
   function clampDraft() {
