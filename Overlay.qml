@@ -183,13 +183,23 @@ Item {
     return ""
   }
 
+  function sourceHandle(displayHandle) {
+    if (!root.mirrorPreview) return displayHandle
+    if (displayHandle === "nw") return "ne"
+    if (displayHandle === "ne") return "nw"
+    if (displayHandle === "sw") return "se"
+    if (displayHandle === "se") return "sw"
+    return displayHandle
+  }
+
   function applyDrag(mx, my) {
-    var origin = root.previewToSourcePoint(dragOriginX, dragOriginY)
-    var now = root.previewToSourcePoint(mx, my)
-    var dx = now.x - origin.x
-    var dy = now.y - origin.y
+    if (paint.w <= 0 || paint.h <= 0) return
+    var dx = (mx - dragOriginX) * sourceSize.w / paint.w
+    var dy = (my - dragOriginY) * sourceSize.h / paint.h
+    if (root.mirrorPreview) dx = -dx
     var start = Model.viewport(sourceSize.w, sourceSize.h, dragZoom, dragMoveUp, dragMoveRight)
-    if (dragMode === "pan") {
+    var mode = root.sourceHandle(dragMode)
+    if (mode === "pan") {
       var next = Model.viewport(sourceSize.w, sourceSize.h, dragZoom, dragMoveUp - dy, dragMoveRight + dx)
       zoom = dragZoom
       moveUp = next.moveUp
@@ -200,10 +210,10 @@ Item {
     var y = start.y
     var w = start.w
     var h = start.h
-    if (dragMode === "se") { w = start.w + dx; h = start.h + dy }
-    else if (dragMode === "nw") { x = start.x + dx; y = start.y + dy; w = start.w - dx; h = start.h - dy }
-    else if (dragMode === "ne") { y = start.y + dy; w = start.w + dx; h = start.h - dy }
-    else if (dragMode === "sw") { x = start.x + dx; w = start.w - dx; h = start.h + dy }
+    if (mode === "se") { w = start.w + dx; h = start.h + dy }
+    else if (mode === "nw") { x = start.x + dx; y = start.y + dy; w = start.w - dx; h = start.h - dy }
+    else if (mode === "ne") { y = start.y + dy; w = start.w + dx; h = start.h - dy }
+    else if (mode === "sw") { x = start.x + dx; w = start.w - dx; h = start.h + dy }
     var mapped = Model.fromRect(sourceSize.w, sourceSize.h, x, y, w, h)
     zoom = mapped.zoom
     moveUp = mapped.moveUp
