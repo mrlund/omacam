@@ -136,7 +136,25 @@ def main() -> int:
         return 0
     if cmd == "apply":
         device = sys.argv[2]
-        cfg = load_config(sys.argv[3])
+        cfg_path = sys.argv[3]
+        cfg = load_config(cfg_path)
+        if len(sys.argv) >= 7:
+            for key, raw in zip(KEYS, sys.argv[4:7]):
+                try:
+                    cfg[key] = max(-100, min(100, int(raw)))
+                except ValueError:
+                    pass
+            try:
+                with open(cfg_path, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except Exception:
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            data.update(cfg)
+            with open(cfg_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+                fh.write("\n")
         used = apply_hw(device, cfg)
         print(json.dumps({"ok": True, "backends": used, "values": cfg}))
         return 0

@@ -91,7 +91,8 @@ cfg_get() {
 
 apply_image_controls() {
   local dev=$1
-  python3 "$IMAGE_PY" apply "$dev" "$CONFIG_FILE" >/dev/null 2>&1 || true
+  shift || true
+  python3 "$IMAGE_PY" apply "$dev" "$CONFIG_FILE" "$@" >/dev/null 2>&1 || true
 }
 
 eq_fragment() {
@@ -495,7 +496,8 @@ cmd_snapshot() {
   local cfg input
   cfg=$(read_config)
   input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
-  apply_image_controls "$input"
+  apply_image_controls "$input" "${2:-}" "${3:-}" "${4:-}"
+  cfg=$(read_config)
 
   local base_w base_h view_w view_h x y
   read -r base_w base_h view_w view_h x y <<<"$(compute_viewport "$cfg")"
@@ -509,29 +511,23 @@ cmd_snapshot() {
   input_flags+=(-video_size "${base_w}x${base_h}" -i "$input")
 
   mkdir -p "$(dirname "$dest")"
-  local eq
-  eq=$(eq_fragment "$input")
-  if [[ -n $eq ]]; then
-    ffmpeg -hide_banner -nostdin -loglevel error -y \
-      "${input_flags[@]}" \
-      -vf "$eq" \
-      -frames:v 1 -q:v 3 \
-      "$dest" </dev/null
-  else
-    ffmpeg -hide_banner -nostdin -loglevel error -y \
-      "${input_flags[@]}" \
-      -frames:v 1 -q:v 3 \
-      "$dest" </dev/null
-  fi
-  python3 - "$dest" "$base_w" "$base_h" <<'PY'
+  # Still is hardware-applied only. Software eq is previewed in the overlay.
+  ffmpeg -hide_banner -nostdin -loglevel error -y \
+    "${input_flags[@]}" \
+    -frames:v 1 -q:v 3 \
+    "$dest" </dev/null
+  python3 - "$dest" "$base_w" "$base_h" "$(cfg_get "$cfg" brightness)" "$(cfg_get "$cfg" contrast)" "$(cfg_get "$cfg" saturation)" <<'PY'
 import json, os, sys
-path, w, h = sys.argv[1:]
+path, w, h, b, c, s = sys.argv[1:]
 print(json.dumps({
     "path": os.path.abspath(path),
     "width": int(w),
     "height": int(h),
     "exists": os.path.isfile(path),
     "bytes": os.path.getsize(path) if os.path.isfile(path) else 0,
+    "brightness": int(b or 0),
+    "contrast": int(c or 0),
+    "saturation": int(s or 0),
 }))
 PY
 }
@@ -605,7 +601,7 @@ case "$cmd" in
   apply-image)
     cfg=$(read_config)
     input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
-    python3 "$IMAGE_PY" apply "$input" "$CONFIG_FILE"
+    python3 "$IMAGE_PY" apply "$input" "$CONFIG_FILE" "${1:-}" "${2:-}" "${3:-}"
     ;;
   probe-decoder) cmd_probe_decoder "${1:-}" ;;
   doctor) cmd_doctor ;;

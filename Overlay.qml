@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
@@ -100,9 +101,20 @@ Item {
     return ""
   }
 
+  function effectDelta(key, current, baked) {
+    var cur = Number(current) || 0
+    if (backendTag(key) === "camera")
+      return (cur - (Number(baked) || 0)) / 100
+    return cur / 100
+  }
+
   function commitImage() {
     pushDraftToService()
     if (service && typeof service.applyImage === "function") service.applyImage()
+    if (service && typeof service.takeSnapshot === "function") service.takeSnapshot()
+  }
+
+  function scheduleImagePreview() {
     imagePreviewTimer.restart()
   }
 
@@ -321,6 +333,15 @@ Item {
             source: root.service ? root.service.previewUrl : ""
           }
 
+          MultiEffect {
+            anchors.fill: previewImage
+            source: previewImage
+            visible: previewImage.status === Image.Ready
+            brightness: root.effectDelta("brightness", root.brightness, root.service ? root.service.previewBrightness : 0)
+            contrast: root.effectDelta("contrast", root.contrast, root.service ? root.service.previewContrast : 0)
+            saturation: 1 + root.effectDelta("saturation", root.saturation, root.service ? root.service.previewSaturation : 0)
+          }
+
           Text {
             anchors.centerIn: parent
             visible: previewImage.status !== Image.Ready
@@ -451,7 +472,7 @@ Item {
             maximum: 100
             step: 1
             integer: true
-            onMoved: function(v) { root.brightness = Math.round(v) }
+            onMoved: function(v) { root.brightness = Math.round(v); root.scheduleImagePreview() }
             onReleased: function(v) { root.brightness = Math.round(v); root.commitImage() }
           }
 
@@ -468,7 +489,7 @@ Item {
             maximum: 100
             step: 1
             integer: true
-            onMoved: function(v) { root.contrast = Math.round(v) }
+            onMoved: function(v) { root.contrast = Math.round(v); root.scheduleImagePreview() }
             onReleased: function(v) { root.contrast = Math.round(v); root.commitImage() }
           }
 
@@ -485,7 +506,7 @@ Item {
             maximum: 100
             step: 1
             integer: true
-            onMoved: function(v) { root.saturation = Math.round(v) }
+            onMoved: function(v) { root.saturation = Math.round(v); root.scheduleImagePreview() }
             onReleased: function(v) { root.saturation = Math.round(v); root.commitImage() }
           }
         }
@@ -554,8 +575,8 @@ Item {
 
   Timer {
     id: imagePreviewTimer
-    interval: 280
+    interval: 220
     repeat: false
-    onTriggered: if (root.service && typeof root.service.takeSnapshot === "function") root.service.takeSnapshot()
+    onTriggered: root.commitImage()
   }
 }

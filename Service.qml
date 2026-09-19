@@ -41,6 +41,10 @@ Item {
   readonly property bool probing: probeProcess.running
   property bool startAfterProbe: false
   property var imageBackends: ({ brightness: "sw", contrast: "sw", saturation: "sw" })
+  property int previewBrightness: 0
+  property int previewContrast: 0
+  property int previewSaturation: 0
+  property bool snapshotAgain: false
 
   readonly property var sourceSize: Model.baseSize(config.mode4k === true)
 
@@ -94,8 +98,12 @@ Item {
   }
 
   function applyImage() {
-    if (applyImageProcess.running) return
-    applyImageProcess.command = [scriptPath, "apply-image"]
+    applyImageProcess.command = [
+      scriptPath, "apply-image",
+      String(config.brightness || 0),
+      String(config.contrast || 0),
+      String(config.saturation || 0)
+    ]
     applyImageProcess.running = true
   }
 
@@ -189,11 +197,19 @@ Item {
   }
 
   function takeSnapshot() {
-    if (snapshotProcess.running) return
+    if (snapshotProcess.running) {
+      snapshotAgain = true
+      return
+    }
     sourceWidth = sourceSize.w
     sourceHeight = sourceSize.h
     writeConfig(config)
-    snapshotProcess.command = [scriptPath, "snapshot", previewPath]
+    snapshotProcess.command = [
+      scriptPath, "snapshot", previewPath,
+      String(config.brightness || 0),
+      String(config.contrast || 0),
+      String(config.saturation || 0)
+    ]
     snapshotProcess.running = true
   }
 
@@ -378,13 +394,24 @@ Item {
         var parsed = Model.parseJson(snapOut.text, {})
         root.sourceWidth = Number(parsed.width || root.sourceSize.w)
         root.sourceHeight = Number(parsed.height || root.sourceSize.h)
+        root.previewBrightness = Number(parsed.brightness || 0)
+        root.previewContrast = Number(parsed.contrast || 0)
+        root.previewSaturation = Number(parsed.saturation || 0)
         root.previewSerial += 1
         root.previewUrl = "file://" + root.previewPath + "?t=" + root.previewSerial
         root.lastError = ""
         root.probeDecoder()
+        if (root.snapshotAgain) {
+          root.snapshotAgain = false
+          root.takeSnapshot()
+        }
       } else {
         root.previewUrl = ""
         root.lastError = Model.elide(snapErr.text || snapOut.text, 220)
+        if (root.snapshotAgain) {
+          root.snapshotAgain = false
+          root.takeSnapshot()
+        }
       }
     }
   }
