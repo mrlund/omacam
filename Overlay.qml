@@ -35,6 +35,10 @@ Item {
   property color border: Color.menu.border
   property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
   property color scrim: Color.menu.scrim
+  property color well: Color.background
+  property color accent: Color.accent
+  property color muted: Color.muted
+  property color nested: Color.menu.selectedBackground
   readonly property int cornerRadius: Style.cornerRadius
   property int contentMargin: Style.spacing.panelPadding
   readonly property string fontFamily: Style.font.menuFamily
@@ -330,7 +334,7 @@ Item {
           id: previewStage
           Layout.fillWidth: true
           Layout.fillHeight: true
-          color: "#111"
+          color: root.well
           radius: Math.max(8, root.cornerRadius)
           border.width: 1
           border.color: root.border
@@ -351,7 +355,7 @@ Item {
             anchors.centerIn: parent
             visible: previewImage.status !== Image.Ready
             text: root.service && root.service.lastError ? root.service.lastError : "Capturing preview…"
-            color: "#ddd"
+            color: root.muted
             font.family: root.fontFamily
             width: parent.width * 0.8
             wrapMode: Text.WordWrap
@@ -363,10 +367,10 @@ Item {
             anchors.fill: parent
             visible: previewImage.status === Image.Ready && root.paint.w > 0
 
-            Rectangle { x: root.paint.x; y: root.paint.y; width: root.paint.w; height: Math.max(0, root.cropPx.y - root.paint.y); color: "#99000000" }
-            Rectangle { x: root.paint.x; y: root.cropPx.y + root.cropPx.h; width: root.paint.w; height: Math.max(0, root.paint.y + root.paint.h - (root.cropPx.y + root.cropPx.h)); color: "#99000000" }
-            Rectangle { x: root.paint.x; y: root.cropPx.y; width: Math.max(0, root.cropPx.x - root.paint.x); height: root.cropPx.h; color: "#99000000" }
-            Rectangle { x: root.cropPx.x + root.cropPx.w; y: root.cropPx.y; width: Math.max(0, root.paint.x + root.paint.w - (root.cropPx.x + root.cropPx.w)); height: root.cropPx.h; color: "#99000000" }
+            Rectangle { x: root.paint.x; y: root.paint.y; width: root.paint.w; height: Math.max(0, root.cropPx.y - root.paint.y); color: root.scrim }
+            Rectangle { x: root.paint.x; y: root.cropPx.y + root.cropPx.h; width: root.paint.w; height: Math.max(0, root.paint.y + root.paint.h - (root.cropPx.y + root.cropPx.h)); color: root.scrim }
+            Rectangle { x: root.paint.x; y: root.cropPx.y; width: Math.max(0, root.cropPx.x - root.paint.x); height: root.cropPx.h; color: root.scrim }
+            Rectangle { x: root.cropPx.x + root.cropPx.w; y: root.cropPx.y; width: Math.max(0, root.paint.x + root.paint.w - (root.cropPx.x + root.cropPx.w)); height: root.cropPx.h; color: root.scrim }
 
             Rectangle {
               x: root.cropPx.x
@@ -374,7 +378,7 @@ Item {
               width: root.cropPx.w
               height: root.cropPx.h
               color: "transparent"
-              border.color: "#ffffff"
+              border.color: root.accent
               border.width: 2
             }
 
@@ -385,7 +389,7 @@ Item {
                 width: Style.space(12)
                 height: Style.space(12)
                 radius: 2
-                color: "#ffffff"
+                color: root.accent
                 x: (index % 2 === 0 ? root.cropPx.x : root.cropPx.x + root.cropPx.w) - width / 2
                 y: (index < 2 ? root.cropPx.y : root.cropPx.y + root.cropPx.h) - height / 2
               }
@@ -436,7 +440,7 @@ Item {
             Layout.preferredWidth: 1
             Layout.preferredHeight: cropInner.implicitHeight + Style.spacing.md * 2
             radius: Math.max(8, root.cornerRadius)
-            color: Qt.rgba(0, 0, 0, 0.22)
+            color: root.nested
             border.width: 1
             border.color: root.border
 
@@ -512,7 +516,7 @@ Item {
             Layout.preferredWidth: 1
             Layout.preferredHeight: pictureInner.implicitHeight + Style.spacing.md * 2
             radius: Math.max(8, root.cornerRadius)
-            color: Qt.rgba(0, 0, 0, 0.22)
+            color: root.nested
             border.width: 1
             border.color: root.border
 
