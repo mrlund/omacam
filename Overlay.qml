@@ -158,12 +158,6 @@ Item {
     return p
   }
 
-  function previewToSourcePoint(px, py) {
-    if (root.mirrorPreview && paint.w > 0)
-      px = paint.x + paint.w - (px - paint.x)
-    return Model.previewToSource(px, py, paint, sourceSize.w, sourceSize.h)
-  }
-
   function clampDraft() {
     var next = Model.viewport(sourceSize.w, sourceSize.h, zoom, moveUp, moveRight)
     zoom = Model.mergeConfig({ zoom: zoom, moveUp: next.moveUp, moveRight: next.moveRight, mode4k: mode4k }).zoom
