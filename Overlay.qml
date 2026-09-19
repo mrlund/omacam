@@ -52,10 +52,18 @@ Item {
       h: h
     }
   }
+  // Meet and similar apps mirror the local self-view. The loopback stream
+  // stays un-flipped so remote participants see the real camera.
+  readonly property bool mirrorPreview: true
   readonly property var cropPx: {
-    var tl = Model.sourceToPreview(view.x, view.y, paint, sourceSize.w, sourceSize.h)
-    var br = Model.sourceToPreview(view.x + view.w, view.y + view.h, paint, sourceSize.w, sourceSize.h)
-    return { x: tl.x, y: tl.y, w: Math.max(8, br.x - tl.x), h: Math.max(8, br.y - tl.y) }
+    var a = root.sourceToPreviewPoint(view.x, view.y)
+    var b = root.sourceToPreviewPoint(view.x + view.w, view.y + view.h)
+    return {
+      x: Math.min(a.x, b.x),
+      y: Math.min(a.y, b.y),
+      w: Math.max(8, Math.abs(b.x - a.x)),
+      h: Math.max(8, Math.abs(b.y - a.y))
+    }
   }
   readonly property string statusLine: {
     if (!service) return "Service not loaded"
@@ -143,6 +151,19 @@ Item {
     root.dismiss()
   }
 
+  function sourceToPreviewPoint(sx, sy) {
+    var p = Model.sourceToPreview(sx, sy, paint, sourceSize.w, sourceSize.h)
+    if (root.mirrorPreview && paint.w > 0)
+      p.x = paint.x + paint.w - (p.x - paint.x)
+    return p
+  }
+
+  function previewToSourcePoint(px, py) {
+    if (root.mirrorPreview && paint.w > 0)
+      px = paint.x + paint.w - (px - paint.x)
+    return Model.previewToSource(px, py, paint, sourceSize.w, sourceSize.h)
+  }
+
   function clampDraft() {
     var next = Model.viewport(sourceSize.w, sourceSize.h, zoom, moveUp, moveRight)
     zoom = Model.mergeConfig({ zoom: zoom, moveUp: next.moveUp, moveRight: next.moveRight, mode4k: mode4k }).zoom
@@ -163,8 +184,8 @@ Item {
   }
 
   function applyDrag(mx, my) {
-    var origin = Model.previewToSource(dragOriginX, dragOriginY, paint, sourceSize.w, sourceSize.h)
-    var now = Model.previewToSource(mx, my, paint, sourceSize.w, sourceSize.h)
+    var origin = root.previewToSourcePoint(dragOriginX, dragOriginY)
+    var now = root.previewToSourcePoint(mx, my)
     var dx = now.x - origin.x
     var dy = now.y - origin.y
     var start = Model.viewport(sourceSize.w, sourceSize.h, dragZoom, dragMoveUp, dragMoveRight)
@@ -234,11 +255,11 @@ Item {
             root.applyAndStart()
             event.accepted = true
           } else if (event.key === Qt.Key_Left) {
-            root.moveRight -= 8
+            root.moveRight += root.mirrorPreview ? 8 : -8
             root.clampDraft()
             event.accepted = true
           } else if (event.key === Qt.Key_Right) {
-            root.moveRight += 8
+            root.moveRight += root.mirrorPreview ? -8 : 8
             root.clampDraft()
             event.accepted = true
           } else if (event.key === Qt.Key_Up) {
@@ -318,6 +339,7 @@ Item {
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: false
+            mirror: root.mirrorPreview
             source: root.service ? root.service.previewUrl : ""
           }
 
