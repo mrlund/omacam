@@ -158,6 +158,18 @@ def main() -> int:
         used = apply_hw(device, cfg)
         print(json.dumps({"ok": True, "backends": used, "values": cfg}))
         return 0
+    if cmd == "apply-live":
+        device = sys.argv[2]
+        cfg = {key: 0 for key in KEYS}
+        if len(sys.argv) >= 6:
+            for key, raw in zip(KEYS, sys.argv[3:6]):
+                try:
+                    cfg[key] = max(-100, min(100, int(raw)))
+                except ValueError:
+                    pass
+        used = apply_hw(device, cfg)
+        print(json.dumps({"ok": True, "backends": used, "values": cfg}))
+        return 0
     if cmd == "eq-filter":
         cfg = load_config(sys.argv[2])
         device = sys.argv[3] if len(sys.argv) > 3 else "/dev/video0"

@@ -101,21 +101,9 @@ Item {
     return ""
   }
 
-  function effectDelta(key, current, baked) {
-    var cur = Number(current) || 0
-    if (backendTag(key) === "camera")
-      return (cur - (Number(baked) || 0)) / 100
-    return cur / 100
-  }
-
   function commitImage() {
     pushDraftToService()
     if (service && typeof service.applyImage === "function") service.applyImage()
-    if (service && typeof service.takeSnapshot === "function") service.takeSnapshot()
-  }
-
-  function scheduleImagePreview() {
-    imagePreviewTimer.restart()
   }
 
   onServiceChanged: {
@@ -330,6 +318,8 @@ Item {
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: false
+            opacity: 0
+            layer.enabled: true
             source: root.service ? root.service.previewUrl : ""
           }
 
@@ -337,9 +327,9 @@ Item {
             anchors.fill: previewImage
             source: previewImage
             visible: previewImage.status === Image.Ready
-            brightness: root.effectDelta("brightness", root.brightness, root.service ? root.service.previewBrightness : 0)
-            contrast: root.effectDelta("contrast", root.contrast, root.service ? root.service.previewContrast : 0)
-            saturation: 1 + root.effectDelta("saturation", root.saturation, root.service ? root.service.previewSaturation : 0)
+            brightness: root.brightness / 100
+            contrast: root.contrast / 100
+            saturation: 1 + root.saturation / 100
           }
 
           Text {
@@ -472,7 +462,7 @@ Item {
             maximum: 100
             step: 1
             integer: true
-            onMoved: function(v) { root.brightness = Math.round(v); root.scheduleImagePreview() }
+            onMoved: function(v) { root.brightness = Math.round(v) }
             onReleased: function(v) { root.brightness = Math.round(v); root.commitImage() }
           }
 
@@ -489,7 +479,7 @@ Item {
             maximum: 100
             step: 1
             integer: true
-            onMoved: function(v) { root.contrast = Math.round(v); root.scheduleImagePreview() }
+            onMoved: function(v) { root.contrast = Math.round(v) }
             onReleased: function(v) { root.contrast = Math.round(v); root.commitImage() }
           }
 
@@ -506,7 +496,7 @@ Item {
             maximum: 100
             step: 1
             integer: true
-            onMoved: function(v) { root.saturation = Math.round(v); root.scheduleImagePreview() }
+            onMoved: function(v) { root.saturation = Math.round(v) }
             onReleased: function(v) { root.saturation = Math.round(v); root.commitImage() }
           }
         }
@@ -573,10 +563,4 @@ Item {
     }
   }
 
-  Timer {
-    id: imagePreviewTimer
-    interval: 220
-    repeat: false
-    onTriggered: root.commitImage()
-  }
 }

@@ -496,8 +496,6 @@ cmd_snapshot() {
   local cfg input
   cfg=$(read_config)
   input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
-  apply_image_controls "$input" "${2:-}" "${3:-}" "${4:-}"
-  cfg=$(read_config)
 
   local base_w base_h view_w view_h x y
   read -r base_w base_h view_w view_h x y <<<"$(compute_viewport "$cfg")"
@@ -511,23 +509,28 @@ cmd_snapshot() {
   input_flags+=(-video_size "${base_w}x${base_h}" -i "$input")
 
   mkdir -p "$(dirname "$dest")"
-  # Still is hardware-applied only. Software eq is previewed in the overlay.
+  # Neutral still: opening the device often ignores pre-set UVC. Preview color
+  # is applied in the overlay; restore the user's knobs after the grab.
+  python3 "$IMAGE_PY" apply-live "$input" 0 0 0 >/dev/null 2>&1 || true
   ffmpeg -hide_banner -nostdin -loglevel error -y \
     "${input_flags[@]}" \
     -frames:v 1 -q:v 3 \
     "$dest" </dev/null
-  python3 - "$dest" "$base_w" "$base_h" "$(cfg_get "$cfg" brightness)" "$(cfg_get "$cfg" contrast)" "$(cfg_get "$cfg" saturation)" <<'PY'
+  python3 "$IMAGE_PY" apply-live "$input" \
+    "$(cfg_get "$cfg" brightness)" "$(cfg_get "$cfg" contrast)" "$(cfg_get "$cfg" saturation)" \
+    >/dev/null 2>&1 || true
+  python3 - "$dest" "$base_w" "$base_h" <<'PY'
 import json, os, sys
-path, w, h, b, c, s = sys.argv[1:]
+path, w, h = sys.argv[1:]
 print(json.dumps({
     "path": os.path.abspath(path),
     "width": int(w),
     "height": int(h),
     "exists": os.path.isfile(path),
     "bytes": os.path.getsize(path) if os.path.isfile(path) else 0,
-    "brightness": int(b or 0),
-    "contrast": int(c or 0),
-    "saturation": int(s or 0),
+    "brightness": 0,
+    "contrast": 0,
+    "saturation": 0,
 }))
 PY
 }
