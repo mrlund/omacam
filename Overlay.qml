@@ -58,7 +58,7 @@ Item {
     if (!service) return "Service not loaded"
     if (service.lastError) return service.lastError
     if (service.capturing) return "Capturing preview…"
-    if (service.probing) return "Checking whether this GPU can decode the camera (once)…"
+    if (service.probing) return "Checking whether this GPU can decode the camera…"
     if (!service.previewUrl) return "Capturing preview…"
     return "Drag the frame to move it. Scroll or use the zoom slider to resize. Start writes this crop to Omacam."
   }
@@ -437,12 +437,29 @@ Item {
             onClicked: root.dismiss()
           }
 
+          Button {
+            text: root.service && root.service.probing
+              ? "Checking GPU…"
+              : (root.service && root.service.decoder === "cuda"
+                ? "Retry GPU decode (using GPU)"
+                : "Retry GPU decode (using CPU)")
+            foreground: root.foreground
+            bordered: true
+            enabled: !!(root.service && !root.service.probing && !root.service.capturing)
+            tooltipText: "Probe NVDEC again and cache cpu or cuda. This Logitech 4K stream is usually CPU."
+            onClicked: {
+              if (root.service && typeof root.service.probeDecoder === "function")
+                root.service.probeDecoder(true)
+            }
+          }
+
           Item { Layout.fillWidth: true }
 
           Button {
             text: "Start cropped camera"
             foreground: root.foreground
             active: true
+            enabled: !(root.service && (root.service.probing || root.service.capturing))
             onClicked: root.applyAndStart()
           }
         }

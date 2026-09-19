@@ -104,15 +104,18 @@ Item {
     doctorProcess.running = true
   }
 
+  readonly property string decoder: String(config && config.decoder ? config.decoder : "auto")
+  property string lastProbeDetail: ""
+
   function decoderNeedsProbe() {
-    var d = String(config && config.decoder ? config.decoder : "auto")
-    return d !== "cpu" && d !== "cuda"
+    return decoder !== "cpu" && decoder !== "cuda"
   }
 
-  function probeDecoder() {
+  function probeDecoder(force) {
     if (probeProcess.running || snapshotProcess.running) return
-    if (!decoderNeedsProbe()) return
-    probeProcess.command = [scriptPath, "probe-decoder"]
+    if (!force && !decoderNeedsProbe()) return
+    lastProbeDetail = ""
+    probeProcess.command = force ? [scriptPath, "probe-decoder", "--force"] : [scriptPath, "probe-decoder"]
     probeProcess.running = true
   }
 
@@ -303,6 +306,7 @@ Item {
     onExited: function(code) {
       var parsed = Model.parseJson(probeOut.text, {})
       var decoder = String(parsed.decoder || (code === 0 ? "" : "cpu"))
+      root.lastProbeDetail = String(parsed.detail || probeErr.text || "")
       if (decoder === "cpu" || decoder === "cuda") {
         var next = Model.mergeConfig(root.config)
         next.decoder = decoder
