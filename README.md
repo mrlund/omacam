@@ -120,6 +120,13 @@ When the crop is already about 1920×1080, scale is skipped (1:1 pixels).
 Otherwise it uses bilinear rather than Lanczos. The frame queue is kept
 small so RSS stays down.
 
+The first time you open the framer, Omacam spends a couple of extra seconds
+asking whether NVDEC can decode this camera’s MJPEG, then stores `cpu` or
+`cuda` in `~/.config/omacam/config.json`. Start never re-probes; it only
+reads that flag. On this Logitech 4K (4:2:2 MJPEG) the result is almost
+always `cpu`. Re-run `scripts/omacam probe-decoder --force` if you change
+GPU or camera.
+
 Turn it off between calls. Do not autostart it at login.
 
 The framer pauses the pipeline for a moment so it can grab the physical

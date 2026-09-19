@@ -58,6 +58,7 @@ Item {
     if (!service) return "Service not loaded"
     if (service.lastError) return service.lastError
     if (service.capturing) return "Capturing preview…"
+    if (service.probing) return "Checking whether this GPU can decode the camera (once)…"
     if (!service.previewUrl) return "Capturing preview…"
     return "Drag the frame to move it. Scroll or use the zoom slider to resize. Start writes this crop to Omacam."
   }

@@ -9,7 +9,8 @@ var DEFAULTS = {
   outputWidth: 1920,
   outputHeight: 1080,
   framerate: 30,
-  scaler: "bilinear"
+  scaler: "bilinear",
+  decoder: "auto"
 }
 
 function even(n) {
@@ -44,6 +45,8 @@ function mergeConfig(raw) {
   if (src.outputHeight !== undefined) out.outputHeight = Number(src.outputHeight)
   if (src.framerate !== undefined) out.framerate = Number(src.framerate)
   if (src.scaler !== undefined && String(src.scaler) !== "") out.scaler = String(src.scaler)
+  if (src.decoder !== undefined && src.decoder !== null && String(src.decoder) !== "")
+    out.decoder = String(src.decoder)
   return normalize(out)
 }
 
@@ -53,6 +56,9 @@ function normalize(cfg) {
   cfg.outputWidth = even(clamp(cfg.outputWidth || 1920, 320, 3840))
   cfg.outputHeight = even(clamp(cfg.outputHeight || 1080, 180, 2160))
   cfg.framerate = clamp(Math.round(Number(cfg.framerate) || 30), 5, 60)
+  var decoder = String(cfg.decoder || "auto")
+  if (decoder !== "cpu" && decoder !== "cuda") decoder = "auto"
+  cfg.decoder = decoder
   var view = viewport(base.w, base.h, cfg.zoom, cfg.moveUp, cfg.moveRight)
   cfg.moveRight = view.moveRight
   cfg.moveUp = view.moveUp

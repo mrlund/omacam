@@ -35,7 +35,8 @@ default_config() {
   "outputWidth": 1920,
   "outputHeight": 1080,
   "framerate": 30,
-  "scaler": "bilinear"
+  "scaler": "bilinear",
+  "decoder": "auto"
 }
 EOF
 }
@@ -61,6 +62,7 @@ defaults = {
     "outputHeight": 1080,
     "framerate": 30,
     "scaler": "bilinear",
+    "decoder": "auto",
 }
 try:
     with open(path, encoding="utf-8") as fh:
@@ -77,6 +79,28 @@ PY
 
 cfg_get() {
   python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], ""))' "$1" "$2"
+}
+
+set_config_key() {
+  local key=$1
+  local value=$2
+  ensure_config
+  python3 - "$CONFIG_FILE" "$key" "$value" <<'PY'
+import json, sys
+path, key, value = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+data[key] = value
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+print(json.dumps({"ok": True, key: value, "configPath": path}))
+PY
 }
 
 loopback_loaded() {
@@ -328,21 +352,114 @@ cmd_start() {
     vf="crop=${crop_w}:${crop_h}:${x}:${y},scale=${out_w}:${out_h}:flags=${scaler}:in_range=pc:out_range=pc,format=yuyv422"
   fi
 
-  : > "$LOG_FILE"
-  # New session so a shell / plugin restart does not kill the pipeline.
-  setsid ffmpeg -hide_banner -nostdin -an -loglevel error \
-    "${input_flags[@]}" \
-    -vf "$vf" \
-    -f v4l2 -pix_fmt yuyv422 "$virtual" \
-    </dev/null >>"$LOG_FILE" 2>&1 &
-  local pid=$!
-  echo "$pid" > "$PID_FILE"
-  sleep 0.4
+  local decoder
+  decoder=$(cfg_get "$cfg" decoder)
+  [[ $decoder == cuda ]] || decoder=cpu
+
+  launch_stream() {
+    local kind=$1
+    : > "$LOG_FILE"
+    if [[ $kind == cuda ]]; then
+      local top=$y
+      local left=$x
+      local bottom=$(( base_h - y - crop_h ))
+      local right=$(( base_w - x - crop_w ))
+      if (( bottom < 0 )); then bottom=0; fi
+      if (( right < 0 )); then right=0; fi
+      setsid ffmpeg -hide_banner -nostdin -an -loglevel error \
+        -hwaccel cuda -hwaccel_output_format cuda -c:v mjpeg_cuvid \
+        -crop "${top}x${bottom}x${left}x${right}" -resize "${out_w}x${out_h}" \
+        "${input_flags[@]}" \
+        -vf "hwdownload,format=nv12,format=yuyv422" \
+        -f v4l2 -pix_fmt yuyv422 "$virtual" \
+        </dev/null >>"$LOG_FILE" 2>&1 &
+    else
+      setsid ffmpeg -hide_banner -nostdin -an -loglevel error \
+        "${input_flags[@]}" \
+        -vf "$vf" \
+        -f v4l2 -pix_fmt yuyv422 "$virtual" \
+        </dev/null >>"$LOG_FILE" 2>&1 &
+    fi
+    local pid=$!
+    echo "$pid" > "$PID_FILE"
+    sleep 0.4
+    pid_running "$pid"
+  }
+
+  if [[ $decoder == cuda ]]; then
+    if ! launch_stream cuda; then
+      rm -f "$PID_FILE"
+      set_config_key decoder cpu >/dev/null
+      decoder=cpu
+      launch_stream cpu || true
+    fi
+  else
+    launch_stream cpu || true
+  fi
+
+  local pid
+  pid=$(current_pid || true)
   if ! pid_running "$pid"; then
     rm -f "$PID_FILE"
     fail "ffmpeg exited immediately. $(tr '\n' ' ' < "$LOG_FILE")"
   fi
   print_status
+}
+
+cmd_probe_decoder() {
+  command -v ffmpeg >/dev/null || fail "ffmpeg is not installed"
+  local force=false
+  [[ ${1:-} == --force ]] && force=true
+  local cfg input
+  cfg=$(read_config)
+  local current
+  current=$(cfg_get "$cfg" decoder)
+  if [[ $force != true && ( $current == cpu || $current == cuda ) ]]; then
+    python3 -c 'import json,sys; print(json.dumps({"decoder": sys.argv[1], "probed": False}))' "$current"
+    return 0
+  fi
+
+  input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
+  local base_w=1920 base_h=1080
+  local mode4k
+  mode4k=$(cfg_get "$cfg" mode4k)
+  if [[ $mode4k == True || $mode4k == true ]]; then
+    base_w=3840
+    base_h=2160
+  fi
+
+  local log=$STATE_DIR/probe.log
+  : > "$log"
+  # Hard cap: NVDEC failure otherwise spams for tens of seconds.
+  set +e
+  timeout --kill-after=1s 3s ffmpeg -hide_banner -nostdin -an -loglevel error \
+    -hwaccel cuda -hwaccel_output_format cuda -c:v mjpeg_cuvid \
+    -f v4l2 -thread_queue_size 4 -input_format mjpeg \
+    -video_size "${base_w}x${base_h}" -i "$input" \
+    -frames:v 2 -f null - </dev/null >"$log" 2>&1
+  local rc=$?
+  set -e
+
+  local decoder=cpu
+  if [[ $rc -eq 0 ]]; then
+    decoder=cuda
+  fi
+  set_config_key decoder "$decoder" >/dev/null
+  python3 - "$decoder" "$rc" "$log" <<'PY'
+import json, sys
+decoder, rc, log = sys.argv[1:]
+detail = ""
+try:
+    detail = open(log, encoding="utf-8", errors="replace").read().strip().replace("\n", " ")[:240]
+except OSError:
+    pass
+print(json.dumps({
+    "decoder": decoder,
+    "probed": True,
+    "ffmpegExit": int(rc),
+    "detail": detail,
+}))
+PY
 }
 
 cmd_snapshot() {
@@ -394,9 +511,11 @@ cmd_doctor() {
   local cfg
   cfg=$(read_config)
   input=$(find_input "$(cfg_get "$cfg" inputDevice)" 2>/dev/null || true)
-  python3 - "$ffmpeg_ok" "$ctl_ok" "$loaded" "$virtual" "$input" <<'PY'
+  local decoder
+  decoder=$(cfg_get "$cfg" decoder)
+  python3 - "$ffmpeg_ok" "$ctl_ok" "$loaded" "$virtual" "$input" "$decoder" <<'PY'
 import json, sys
-ffmpeg_ok, ctl_ok, loaded, virtual, inp = sys.argv[1:]
+ffmpeg_ok, ctl_ok, loaded, virtual, inp, decoder = sys.argv[1:]
 missing = []
 if ffmpeg_ok != "true":
     missing.append("ffmpeg")
@@ -410,6 +529,7 @@ print(json.dumps({
     "loopbackLoaded": loaded == "true",
     "virtualDevice": virtual or "",
     "inputDevice": inp or "",
+    "decoder": decoder or "auto",
     "ready": ffmpeg_ok == "true" and ctl_ok == "true" and bool(virtual) and bool(inp),
     "missing": missing,
 }))
@@ -423,9 +543,10 @@ Usage: omacam <command>
   start       Start the cropped virtual camera (background ffmpeg)
   stop        Stop it
   status      JSON status
-  snapshot    Grab a still of the full physical frame for the framer
-  doctor      JSON dependency check
-  config      Print the config JSON path and contents
+  snapshot       Grab a still of the full physical frame for the framer
+  probe-decoder  Once-only GPU MJPEG probe; caches cpu or cuda in config
+  doctor         JSON dependency check
+  config         Print the config JSON path and contents
 EOF
 }
 
@@ -436,6 +557,7 @@ case "$cmd" in
   stop) stop_stream; print_status ;;
   status) print_status ;;
   snapshot) cmd_snapshot "${1:-}" ;;
+  probe-decoder) cmd_probe_decoder "${1:-}" ;;
   doctor) cmd_doctor ;;
   config)
     ensure_config

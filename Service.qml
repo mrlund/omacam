@@ -38,6 +38,8 @@ Item {
   property int sourceWidth: 3840
   property int sourceHeight: 2160
   readonly property bool capturing: snapshotProcess.running
+  readonly property bool probing: probeProcess.running
+  property bool startAfterProbe: false
 
   readonly property var sourceSize: Model.baseSize(config.mode4k === true)
 
@@ -102,8 +104,24 @@ Item {
     doctorProcess.running = true
   }
 
+  function decoderNeedsProbe() {
+    var d = String(config && config.decoder ? config.decoder : "auto")
+    return d !== "cpu" && d !== "cuda"
+  }
+
+  function probeDecoder() {
+    if (probeProcess.running || snapshotProcess.running) return
+    if (!decoderNeedsProbe()) return
+    probeProcess.command = [scriptPath, "probe-decoder"]
+    probeProcess.running = true
+  }
+
   function start() {
     if (busy) return
+    if (probeProcess.running) {
+      startAfterProbe = true
+      return
+    }
     writeConfig(config)
     busy = true
     lastError = ""
@@ -244,6 +262,11 @@ Item {
     onExited: function(code) {
       if (code === 0) {
         root.lastError = ""
+        if (root.decoderNeedsProbe()) {
+          root.startAfterProbe = true
+          root.probeDecoder()
+          if (root.probing) return
+        }
         startProcess.command = [root.scriptPath, "start"]
         startProcess.running = true
         return
@@ -273,6 +296,26 @@ Item {
   }
 
   Process {
+    id: probeProcess
+    running: false
+    stdout: StdioCollector { id: probeOut; waitForEnd: true }
+    stderr: StdioCollector { id: probeErr; waitForEnd: true }
+    onExited: function(code) {
+      var parsed = Model.parseJson(probeOut.text, {})
+      var decoder = String(parsed.decoder || (code === 0 ? "" : "cpu"))
+      if (decoder === "cpu" || decoder === "cuda") {
+        var next = Model.mergeConfig(root.config)
+        next.decoder = decoder
+        root.config = next
+      }
+      if (root.startAfterProbe) {
+        root.startAfterProbe = false
+        root.start()
+      }
+    }
+  }
+
+  Process {
     id: snapshotProcess
     running: false
     stdout: StdioCollector { id: snapOut; waitForEnd: true }
@@ -285,6 +328,7 @@ Item {
         root.previewSerial += 1
         root.previewUrl = "file://" + root.previewPath + "?t=" + root.previewSerial
         root.lastError = ""
+        root.probeDecoder()
       } else {
         root.previewUrl = ""
         root.lastError = Model.elide(snapErr.text || snapOut.text, 220)
