@@ -497,40 +497,84 @@ cmd_snapshot() {
   cfg=$(read_config)
   input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
 
+  if [[ $# -ge 4 ]]; then
+    python3 - "$CONFIG_FILE" "${2:-0}" "${3:-0}" "${4:-0}" <<'PY'
+import json, sys
+path, b, c, s = sys.argv[1:5]
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+data["brightness"] = max(-100, min(100, int(b)))
+data["contrast"] = max(-100, min(100, int(c)))
+data["saturation"] = max(-100, min(100, int(s)))
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
+    cfg=$(read_config)
+  fi
+
+  local b c s
+  b=$(cfg_get "$cfg" brightness)
+  c=$(cfg_get "$cfg" contrast)
+  s=$(cfg_get "$cfg" saturation)
+
   local base_w base_h view_w view_h x y
   read -r base_w base_h view_w view_h x y <<<"$(compute_viewport "$cfg")"
   local mode4k
   mode4k=$(cfg_get "$cfg" mode4k)
 
-  local input_flags=(-f v4l2 -thread_queue_size 512)
+  local input_flags=(-f v4l2 -thread_queue_size 8)
   if [[ $mode4k == True || $mode4k == true ]]; then
     input_flags+=(-input_format mjpeg)
   fi
   input_flags+=(-video_size "${base_w}x${base_h}" -i "$input")
 
   mkdir -p "$(dirname "$dest")"
-  # Neutral still: opening the device often ignores pre-set UVC. Preview color
-  # is applied in the overlay; restore the user's knobs after the grab.
-  python3 "$IMAGE_PY" apply-live "$input" 0 0 0 >/dev/null 2>&1 || true
-  ffmpeg -hide_banner -nostdin -loglevel error -y \
+  local eq vf
+  eq=$(eq_fragment "$input")
+  vf="scale=1920:-1"
+  if [[ -n $eq ]]; then
+    vf="${vf},${eq}"
+  fi
+
+  # Hold the device open, THEN set UVC. A one-frame grab after set-ctrl is
+  # usually the pre-adjustment picture; Logitech resets knobs on stream start.
+  set +e
+  ffmpeg -hide_banner -nostdin -an -loglevel error -y \
     "${input_flags[@]}" \
-    -frames:v 1 -q:v 3 \
-    "$dest" </dev/null
-  python3 "$IMAGE_PY" apply-live "$input" \
-    "$(cfg_get "$cfg" brightness)" "$(cfg_get "$cfg" contrast)" "$(cfg_get "$cfg" saturation)" \
-    >/dev/null 2>&1 || true
-  python3 - "$dest" "$base_w" "$base_h" <<'PY'
+    -vf "$vf" -q:v 3 -f image2 -update 1 \
+    "$dest" </dev/null &
+  local fpid=$!
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$fpid" 2>/dev/null && break
+    sleep 0.05
+  done
+  sleep 0.2
+  python3 "$IMAGE_PY" apply-live "$input" "$b" "$c" "$s" >/dev/null 2>&1
+  sleep 0.35
+  kill "$fpid" 2>/dev/null
+  wait "$fpid" 2>/dev/null
+  set -e
+
+  [[ -f $dest ]] || fail "preview capture failed"
+  python3 - "$dest" "$base_w" "$base_h" "$b" "$c" "$s" <<'PY'
 import json, os, sys
-path, w, h = sys.argv[1:]
+path, w, h, b, c, s = sys.argv[1:]
 print(json.dumps({
     "path": os.path.abspath(path),
     "width": int(w),
     "height": int(h),
     "exists": os.path.isfile(path),
     "bytes": os.path.getsize(path) if os.path.isfile(path) else 0,
-    "brightness": 0,
-    "contrast": 0,
-    "saturation": 0,
+    "brightness": int(b or 0),
+    "contrast": int(c or 0),
+    "saturation": int(s or 0),
 }))
 PY
 }
@@ -595,7 +639,7 @@ case "$cmd" in
   start) cmd_start ;;
   stop) stop_stream; print_status ;;
   status) print_status ;;
-  snapshot) cmd_snapshot "${1:-}" ;;
+  snapshot) cmd_snapshot "$@" ;;
   image-ctrls)
     cfg=$(read_config)
     input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."

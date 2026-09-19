@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
@@ -103,7 +102,7 @@ Item {
 
   function commitImage() {
     pushDraftToService()
-    if (service && typeof service.applyImage === "function") service.applyImage()
+    imagePreviewTimer.restart()
   }
 
   onServiceChanged: {
@@ -318,18 +317,7 @@ Item {
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: false
-            opacity: 0
-            layer.enabled: true
             source: root.service ? root.service.previewUrl : ""
-          }
-
-          MultiEffect {
-            anchors.fill: previewImage
-            source: previewImage
-            visible: previewImage.status === Image.Ready
-            brightness: root.brightness / 100
-            contrast: root.contrast / 100
-            saturation: 1 + root.saturation / 100
           }
 
           Text {
@@ -462,7 +450,7 @@ Item {
             maximum: 100
             step: 1
             integer: true
-            onMoved: function(v) { root.brightness = Math.round(v) }
+            onMoved: function(v) { root.brightness = Math.round(v); root.commitImage() }
             onReleased: function(v) { root.brightness = Math.round(v); root.commitImage() }
           }
 
@@ -479,7 +467,7 @@ Item {
             maximum: 100
             step: 1
             integer: true
-            onMoved: function(v) { root.contrast = Math.round(v) }
+            onMoved: function(v) { root.contrast = Math.round(v); root.commitImage() }
             onReleased: function(v) { root.contrast = Math.round(v); root.commitImage() }
           }
 
@@ -496,7 +484,7 @@ Item {
             maximum: 100
             step: 1
             integer: true
-            onMoved: function(v) { root.saturation = Math.round(v) }
+            onMoved: function(v) { root.saturation = Math.round(v); root.commitImage() }
             onReleased: function(v) { root.saturation = Math.round(v); root.commitImage() }
           }
         }
@@ -563,4 +551,13 @@ Item {
     }
   }
 
+  Timer {
+    id: imagePreviewTimer
+    interval: 280
+    repeat: false
+    onTriggered: {
+      if (root.service && typeof root.service.takeSnapshot === "function")
+        root.service.takeSnapshot()
+    }
+  }
 }
