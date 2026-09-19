@@ -11,6 +11,8 @@ PID_FILE="$STATE_DIR/ffmpeg.pid"
 LOG_FILE="$STATE_DIR/ffmpeg.log"
 PREVIEW_FILE="$STATE_DIR/preview.jpg"
 CARD_LABEL="Omacam"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+IMAGE_PY="$SCRIPT_DIR/image.py"
 
 mkdir -p "$CONFIG_DIR" "$STATE_DIR"
 
@@ -36,7 +38,10 @@ default_config() {
   "outputHeight": 1080,
   "framerate": 30,
   "scaler": "bilinear",
-  "decoder": "auto"
+  "decoder": "auto",
+  "brightness": 0,
+  "contrast": 0,
+  "saturation": 0
 }
 EOF
 }
@@ -63,6 +68,9 @@ defaults = {
     "framerate": 30,
     "scaler": "bilinear",
     "decoder": "auto",
+    "brightness": 0,
+    "contrast": 0,
+    "saturation": 0,
 }
 try:
     with open(path, encoding="utf-8") as fh:
@@ -79,6 +87,16 @@ PY
 
 cfg_get() {
   python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], ""))' "$1" "$2"
+}
+
+apply_image_controls() {
+  local dev=$1
+  python3 "$IMAGE_PY" apply "$dev" "$CONFIG_FILE" >/dev/null 2>&1 || true
+}
+
+eq_fragment() {
+  local dev=$1
+  python3 "$IMAGE_PY" eq-filter "$CONFIG_FILE" "$dev" 2>/dev/null || true
 }
 
 set_config_key() {
@@ -328,6 +346,7 @@ cmd_start() {
   fi
   virtual=$(find_loopback) || fail "No Omacam loopback device found."
   input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
+  apply_image_controls "$input"
 
   stop_stream
 
@@ -347,9 +366,17 @@ cmd_start() {
   fi
   input_flags+=(-video_size "${base_w}x${base_h}" -framerate "$fps" -i "$input")
 
-  local vf="crop=${crop_w}:${crop_h}:${x}:${y},format=yuyv422"
+  local eq vf_core
+  eq=$(eq_fragment "$input")
+  vf_core="crop=${crop_w}:${crop_h}:${x}:${y}"
   if [[ $need_scale == 1 ]]; then
-    vf="crop=${crop_w}:${crop_h}:${x}:${y},scale=${out_w}:${out_h}:flags=${scaler}:in_range=pc:out_range=pc,format=yuyv422"
+    vf_core="${vf_core},scale=${out_w}:${out_h}:flags=${scaler}:in_range=pc:out_range=pc"
+  fi
+  local vf="${vf_core},format=yuyv422"
+  local cuda_vf="hwdownload,format=nv12,format=yuyv422"
+  if [[ -n $eq ]]; then
+    vf="${vf_core},${eq},format=yuyv422"
+    cuda_vf="hwdownload,format=nv12,${eq},format=yuyv422"
   fi
 
   local decoder
@@ -370,7 +397,7 @@ cmd_start() {
         -hwaccel cuda -hwaccel_output_format cuda -c:v mjpeg_cuvid \
         -crop "${top}x${bottom}x${left}x${right}" -resize "${out_w}x${out_h}" \
         "${input_flags[@]}" \
-        -vf "hwdownload,format=nv12,format=yuyv422" \
+        -vf "$cuda_vf" \
         -f v4l2 -pix_fmt yuyv422 "$virtual" \
         </dev/null >>"$LOG_FILE" 2>&1 &
     else
@@ -468,6 +495,7 @@ cmd_snapshot() {
   local cfg input
   cfg=$(read_config)
   input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
+  apply_image_controls "$input"
 
   local base_w base_h view_w view_h x y
   read -r base_w base_h view_w view_h x y <<<"$(compute_viewport "$cfg")"
@@ -481,10 +509,20 @@ cmd_snapshot() {
   input_flags+=(-video_size "${base_w}x${base_h}" -i "$input")
 
   mkdir -p "$(dirname "$dest")"
-  ffmpeg -hide_banner -nostdin -loglevel error -y \
-    "${input_flags[@]}" \
-    -frames:v 1 -q:v 3 \
-    "$dest" </dev/null
+  local eq
+  eq=$(eq_fragment "$input")
+  if [[ -n $eq ]]; then
+    ffmpeg -hide_banner -nostdin -loglevel error -y \
+      "${input_flags[@]}" \
+      -vf "$eq" \
+      -frames:v 1 -q:v 3 \
+      "$dest" </dev/null
+  else
+    ffmpeg -hide_banner -nostdin -loglevel error -y \
+      "${input_flags[@]}" \
+      -frames:v 1 -q:v 3 \
+      "$dest" </dev/null
+  fi
   python3 - "$dest" "$base_w" "$base_h" <<'PY'
 import json, os, sys
 path, w, h = sys.argv[1:]
@@ -544,6 +582,8 @@ Usage: omacam <command>
   stop        Stop it
   status      JSON status
   snapshot       Grab a still of the full physical frame for the framer
+  image-ctrls    JSON: which brightness/contrast/saturation knobs are hardware
+  apply-image    Push saved image values to the camera (no-op for software)
   probe-decoder  Once-only GPU MJPEG probe; caches cpu or cuda in config
   doctor         JSON dependency check
   config         Print the config JSON path and contents
@@ -557,6 +597,16 @@ case "$cmd" in
   stop) stop_stream; print_status ;;
   status) print_status ;;
   snapshot) cmd_snapshot "${1:-}" ;;
+  image-ctrls)
+    cfg=$(read_config)
+    input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
+    python3 "$IMAGE_PY" ctrls "$input"
+    ;;
+  apply-image)
+    cfg=$(read_config)
+    input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
+    python3 "$IMAGE_PY" apply "$input" "$CONFIG_FILE"
+    ;;
   probe-decoder) cmd_probe_decoder "${1:-}" ;;
   doctor) cmd_doctor ;;
   config)

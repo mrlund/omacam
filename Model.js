@@ -10,7 +10,10 @@ var DEFAULTS = {
   outputHeight: 1080,
   framerate: 30,
   scaler: "bilinear",
-  decoder: "auto"
+  decoder: "auto",
+  brightness: 0,
+  contrast: 0,
+  saturation: 0
 }
 
 function even(n) {
@@ -47,6 +50,9 @@ function mergeConfig(raw) {
   if (src.scaler !== undefined && String(src.scaler) !== "") out.scaler = String(src.scaler)
   if (src.decoder !== undefined && src.decoder !== null && String(src.decoder) !== "")
     out.decoder = String(src.decoder)
+  if (src.brightness !== undefined) out.brightness = Number(src.brightness)
+  if (src.contrast !== undefined) out.contrast = Number(src.contrast)
+  if (src.saturation !== undefined) out.saturation = Number(src.saturation)
   return normalize(out)
 }
 
@@ -59,6 +65,9 @@ function normalize(cfg) {
   var decoder = String(cfg.decoder || "auto")
   if (decoder !== "cpu" && decoder !== "cuda") decoder = "auto"
   cfg.decoder = decoder
+  cfg.brightness = clamp(Math.round(Number(cfg.brightness) || 0), -100, 100)
+  cfg.contrast = clamp(Math.round(Number(cfg.contrast) || 0), -100, 100)
+  cfg.saturation = clamp(Math.round(Number(cfg.saturation) || 0), -100, 100)
   var view = viewport(base.w, base.h, cfg.zoom, cfg.moveUp, cfg.moveRight)
   cfg.moveRight = view.moveRight
   cfg.moveUp = view.moveUp

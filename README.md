@@ -18,9 +18,10 @@ pipeline, without leaving that pipeline running all day.
 - **On-demand ffmpeg** — the plugin UI is idle until you turn the camera on.
   The encode/crop process is a separate session, so restarting the Omarchy
   shell does not kill a call.
-
-Image controls (brightness, white balance, and so on) are intentionally not
-in this release.
+- **Picture sliders** — brightness, contrast, and saturation. If the camera
+  has those UVC knobs, Omacam uses them (no extra CPU, live). Otherwise it
+  falls back to a cheap ffmpeg `eq` on the 1080p crop. The overlay labels
+  each slider `camera` or `software`.
 
 ## Install
 
@@ -112,20 +113,18 @@ You can also drive it from a terminal:
 
 The plugin does **not** have to run the camera all the time. Enabled QML is
 cheap. **ffmpeg** is not: while Omacam is live it decodes 4K MJPEG (that is
-most of the CPU), crops, and writes 1080p YUYV into the loopback device. USB
-holds the sensor at 4K; the 3080 does not help — the camera sends JPEG, not
-H.264, and NVDEC could not be used for this stream.
+most of the CPU), crops, and writes 1080p YUYV into the loopback device.
+
+Most USB webcams send MJPEG, not H.264, so NVIDIA NVDEC usually cannot take
+that decode. Omacam probes once (first time you open the framer, or **Retry
+GPU decode**) and stores `cpu` or `cuda` in `~/.config/omacam/config.json`.
+Start only reads the flag. On 4:2:2 MJPEG cameras the result is almost
+always `cpu`; that is expected, not a failed install.
 
 When the crop is already about 1920×1080, scale is skipped (1:1 pixels).
 Otherwise it uses bilinear rather than Lanczos. The frame queue is kept
-small so RSS stays down.
-
-The first time you open the framer, Omacam spends a couple of extra seconds
-asking whether NVDEC can decode this camera’s MJPEG, then stores `cpu` or
-`cuda` in `~/.config/omacam/config.json`. Start never re-probes; it only
-reads that flag. On this Logitech 4K (4:2:2 MJPEG) the result is almost
-always `cpu`. Re-run `scripts/omacam probe-decoder --force` if you change
-GPU or camera.
+small so RSS stays down. Software picture adjustments, when used, run on
+the 1080p crop, not the 4K frame.
 
 Turn it off between calls. Do not autostart it at login.
 

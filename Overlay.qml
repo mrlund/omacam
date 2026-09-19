@@ -19,6 +19,9 @@ Item {
   property int zoom: 30
   property int moveUp: 30
   property int moveRight: 100
+  property int brightness: 0
+  property int contrast: 0
+  property int saturation: 0
   property bool mode4k: true
   property string dragMode: ""
   property real dragOriginX: 0
@@ -75,6 +78,9 @@ Item {
     zoom = cfg.zoom
     moveUp = cfg.moveUp
     moveRight = cfg.moveRight
+    brightness = cfg.brightness || 0
+    contrast = cfg.contrast || 0
+    saturation = cfg.saturation || 0
     mode4k = cfg.mode4k === true
     applied = false
   }
@@ -83,6 +89,21 @@ Item {
     if (!service) return
     service.setMode4k(mode4k)
     service.setCrop(zoom, moveUp, moveRight)
+    if (typeof service.setImage === "function")
+      service.setImage(brightness, contrast, saturation)
+  }
+
+  function backendTag(key) {
+    var b = service && service.imageBackends ? service.imageBackends[key] : ""
+    if (b === "hw") return "camera"
+    if (b === "sw") return "software"
+    return ""
+  }
+
+  function commitImage() {
+    pushDraftToService()
+    if (service && typeof service.applyImage === "function") service.applyImage()
+    imagePreviewTimer.restart()
   }
 
   onServiceChanged: {
@@ -102,6 +123,7 @@ Item {
   function close() {
     if (root.opened && !root.applied && root.service) {
       root.service.writeConfig(root.savedConfig)
+      if (typeof root.service.applyImage === "function") root.service.applyImage()
       root.service.finishPreview(false)
     }
     root.opened = false
@@ -415,6 +437,57 @@ Item {
             integer: true
             onMoved: function(v) { root.moveUp = Math.round(v); root.clampDraft() }
           }
+
+          Text {
+            text: "Brightness " + root.brightness + (root.backendTag("brightness") ? " (" + root.backendTag("brightness") + ")" : "")
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+          PanelSlider {
+            Layout.fillWidth: true
+            value: root.brightness
+            minimum: -100
+            maximum: 100
+            step: 1
+            integer: true
+            onMoved: function(v) { root.brightness = Math.round(v) }
+            onReleased: function(v) { root.brightness = Math.round(v); root.commitImage() }
+          }
+
+          Text {
+            text: "Contrast " + root.contrast + (root.backendTag("contrast") ? " (" + root.backendTag("contrast") + ")" : "")
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+          PanelSlider {
+            Layout.fillWidth: true
+            value: root.contrast
+            minimum: -100
+            maximum: 100
+            step: 1
+            integer: true
+            onMoved: function(v) { root.contrast = Math.round(v) }
+            onReleased: function(v) { root.contrast = Math.round(v); root.commitImage() }
+          }
+
+          Text {
+            text: "Saturation " + root.saturation + (root.backendTag("saturation") ? " (" + root.backendTag("saturation") + ")" : "")
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+          PanelSlider {
+            Layout.fillWidth: true
+            value: root.saturation
+            minimum: -100
+            maximum: 100
+            step: 1
+            integer: true
+            onMoved: function(v) { root.saturation = Math.round(v) }
+            onReleased: function(v) { root.saturation = Math.round(v); root.commitImage() }
+          }
         }
 
         Text {
@@ -435,6 +508,18 @@ Item {
             foreground: root.foreground
             bordered: true
             onClicked: root.dismiss()
+          }
+
+          Button {
+            text: "Reset picture"
+            foreground: root.foreground
+            bordered: true
+            onClicked: {
+              root.brightness = 0
+              root.contrast = 0
+              root.saturation = 0
+              root.commitImage()
+            }
           }
 
           Button {
@@ -465,5 +550,12 @@ Item {
         }
       }
     }
+  }
+
+  Timer {
+    id: imagePreviewTimer
+    interval: 280
+    repeat: false
+    onTriggered: if (root.service && typeof root.service.takeSnapshot === "function") root.service.takeSnapshot()
   }
 }

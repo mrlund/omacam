@@ -40,6 +40,7 @@ Item {
   readonly property bool capturing: snapshotProcess.running
   readonly property bool probing: probeProcess.running
   property bool startAfterProbe: false
+  property var imageBackends: ({ brightness: "sw", contrast: "sw", saturation: "sw" })
 
   readonly property var sourceSize: Model.baseSize(config.mode4k === true)
 
@@ -82,6 +83,26 @@ Item {
     next.moveUp = moveUp
     next.moveRight = moveRight
     config = Model.mergeConfig(next)
+  }
+
+  function setImage(brightness, contrast, saturation) {
+    var next = Model.mergeConfig(config)
+    next.brightness = brightness
+    next.contrast = contrast
+    next.saturation = saturation
+    writeConfig(next)
+  }
+
+  function applyImage() {
+    if (applyImageProcess.running) return
+    applyImageProcess.command = [scriptPath, "apply-image"]
+    applyImageProcess.running = true
+  }
+
+  function probeImageCtrls() {
+    if (imageCtrlsProcess.running) return
+    imageCtrlsProcess.command = [scriptPath, "image-ctrls"]
+    imageCtrlsProcess.running = true
   }
 
   function setMode4k(enabled) {
@@ -152,6 +173,7 @@ Item {
       stopProcess.command = [scriptPath, "stop"]
       stopProcess.running = true
     } else {
+      probeImageCtrls()
       takeSnapshot()
     }
   }
@@ -294,8 +316,35 @@ Item {
       root.statusText = "Off"
       if (code !== 0) root.lastError = Model.elide(stopErr.text || stopOut.text, 180)
       root.refresh()
-      if (root.previewing) root.takeSnapshot()
+      if (root.previewing) {
+        root.probeImageCtrls()
+        root.takeSnapshot()
+      }
     }
+  }
+
+  Process {
+    id: imageCtrlsProcess
+    running: false
+    stdout: StdioCollector { id: imageCtrlsOut; waitForEnd: true }
+    onExited: function(code) {
+      if (code !== 0) return
+      var parsed = Model.parseJson(imageCtrlsOut.text, null)
+      if (!parsed || !parsed.controls) return
+      var next = { brightness: "sw", contrast: "sw", saturation: "sw" }
+      var keys = ["brightness", "contrast", "saturation"]
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i]
+        if (parsed.controls[key] && parsed.controls[key].backend === "hw") next[key] = "hw"
+      }
+      root.imageBackends = next
+    }
+  }
+
+  Process {
+    id: applyImageProcess
+    running: false
+    stdout: StdioCollector { waitForEnd: true }
   }
 
   Process {
