@@ -62,6 +62,11 @@ That last `modprobe` is only needed until the next reboot; after that the
 module loads on its own. In the meeting app, pick **Omacam**, not the Logitech
 device.
 
+If you skip this step, preview still works (it uses the real camera) but
+**Start** fails with “no loopback device” after a reboot. Starting from the
+bar will then ask for your password once via a polkit prompt and run the
+same setup.
+
 If you already had a hand-rolled “Cropped Webcam” loopback, Omacam will still
 find it. After a reboot it will show up as **Omacam** instead.
 

@@ -31,6 +31,8 @@ Item {
   property string virtualDevice: ""
   property bool loopbackLoaded: false
   property bool ready: false
+  property bool loopbackSetupTried: false
+  readonly property string loopbackSetupPath: pluginDir + "/scripts/install-loopback.sh"
   property string previewUrl: ""
   property int previewSerial: 0
   property int sourceWidth: 3840
@@ -210,15 +212,46 @@ Item {
     stdout: StdioCollector { id: startOut; waitForEnd: true }
     stderr: StdioCollector { id: startErr; waitForEnd: true }
     onExited: function(code) {
-      root.busy = false
       if (code === 0) {
+        root.busy = false
         root.applyStatus(startOut.text)
         root.lastError = ""
-      } else {
-        root.running = false
-        root.lastError = Model.elide(startErr.text || startOut.text, 220)
-        root.notify("Omacam could not start", root.lastError)
+        root.refresh()
+        return
       }
+      var err = String(startErr.text || startOut.text || "")
+      if (!root.loopbackSetupTried && err.indexOf("LOOPBACK_MISSING") !== -1) {
+        root.loopbackSetupTried = true
+        root.lastError = "Need permission to load the virtual camera (once)"
+        root.notify("Omacam", "Enter your password to load the virtual camera. This is only needed once.")
+        loopbackSetupProcess.command = ["pkexec", root.loopbackSetupPath]
+        loopbackSetupProcess.running = true
+        return
+      }
+      root.busy = false
+      root.running = false
+      root.lastError = Model.elide(err, 220)
+      root.notify("Omacam could not start", root.lastError)
+      root.refresh()
+    }
+  }
+
+  Process {
+    id: loopbackSetupProcess
+    running: false
+    stdout: StdioCollector { id: loopbackOut; waitForEnd: true }
+    stderr: StdioCollector { id: loopbackErr; waitForEnd: true }
+    onExited: function(code) {
+      if (code === 0) {
+        root.lastError = ""
+        startProcess.command = [root.scriptPath, "start"]
+        startProcess.running = true
+        return
+      }
+      root.busy = false
+      root.running = false
+      root.lastError = "Virtual camera module not loaded. Run: sudo " + root.loopbackSetupPath
+      root.notify("Omacam could not start", root.lastError)
       root.refresh()
     }
   }

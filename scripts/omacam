@@ -90,9 +90,36 @@ list_devices_raw() {
 find_loopback() {
   python3 - <<'PY'
 import re, subprocess
-text = subprocess.check_output(["v4l2-ctl", "--list-devices"], text=True, stderr=subprocess.DEVNULL)
+from pathlib import Path
+
+needles = ("omacam", "cropped webcam", "dummy video device", "v4l2loopback", "loopback")
+
+# Prefer the kernel driver: card names change, v4l2loopback does not.
+sys = Path("/sys/class/video4linux")
+if sys.is_dir():
+    def video_index(path):
+        m = re.search(r"video(\d+)$", path.name)
+        return int(m.group(1)) if m else 10**9
+    for p in sorted(sys.glob("video*"), key=video_index):
+        name = ""
+        try:
+            name = (p / "name").read_text(encoding="utf-8", errors="replace").strip().lower()
+        except OSError:
+            pass
+        driver = ""
+        try:
+            driver = (p / "device" / "driver").resolve().name
+        except OSError:
+            pass
+        if driver == "v4l2loopback" or any(n in name for n in needles):
+            print(f"/dev/{p.name}")
+            raise SystemExit(0)
+
+try:
+    text = subprocess.check_output(["v4l2-ctl", "--list-devices"], text=True, stderr=subprocess.DEVNULL)
+except Exception:
+    raise SystemExit(1)
 blocks = re.split(r"\n\s*\n", text)
-needles = ("omacam", "cropped webcam", "dummy video device", "v4l2loopback")
 for block in blocks:
     head = block.splitlines()[0].lower() if block.strip() else ""
     if any(n in head for n in needles):
@@ -102,6 +129,15 @@ for block in blocks:
             raise SystemExit(0)
 raise SystemExit(1)
 PY
+}
+
+try_load_loopback() {
+  if find_loopback >/dev/null 2>&1; then
+    return 0
+  fi
+  # Unprivileged; succeeds only if the user can already modprobe.
+  modprobe v4l2loopback exclusive_caps=1 card_label="Omacam" devices=1 >/dev/null 2>&1 || true
+  find_loopback >/dev/null 2>&1
 }
 
 find_input() {
@@ -240,7 +276,11 @@ cmd_start() {
   command -v v4l2-ctl >/dev/null || fail "v4l2-ctl is not installed (v4l2loopback-utils)"
   local cfg virtual input
   cfg=$(read_config)
-  virtual=$(find_loopback) || fail "No Omacam loopback device found. See the README for the one-time sudo setup."
+  if ! try_load_loopback; then
+    echo "LOOPBACK_MISSING" >&2
+    fail "No loopback device. The v4l2loopback module is not loaded (it does not survive reboot until the one-time setup has run)."
+  fi
+  virtual=$(find_loopback) || fail "No Omacam loopback device found."
   input=$(find_input "$(cfg_get "$cfg" inputDevice)") || fail "No physical webcam found."
 
   stop_stream
