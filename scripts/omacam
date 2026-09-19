@@ -35,7 +35,7 @@ default_config() {
   "outputWidth": 1920,
   "outputHeight": 1080,
   "framerate": 30,
-  "scaler": "lanczos"
+  "scaler": "bilinear"
 }
 EOF
 }
@@ -60,7 +60,7 @@ defaults = {
     "outputWidth": 1920,
     "outputHeight": 1080,
     "framerate": 30,
-    "scaler": "lanczos",
+    "scaler": "bilinear",
 }
 try:
     with open(path, encoding="utf-8") as fh:
@@ -206,11 +206,17 @@ base_w, base_h = (3840, 2160) if mode4k else (1920, 1080)
 zoom = float(cfg.get("zoom", 0) or 0)
 move_up = int(cfg.get("moveUp", 0) or 0)
 move_right = int(cfg.get("moveRight", 0) or 0)
+out_w = int(cfg.get("outputWidth", 1920) or 1920)
+out_h = int(cfg.get("outputHeight", 1080) or 1080)
+scaler = str(cfg.get("scaler") or "bilinear").strip().lower()
+if scaler in ("auto", ""):
+    scaler = "bilinear"
 
 def even(n):
     n = int(n)
     return n - (n % 2)
 
+out_w, out_h = even(out_w), even(out_h)
 factor = 1 - (zoom / 100.0)
 factor = min(1.0, max(0.2, factor))
 view_w = even(max(2, min(base_w, int(base_w * factor))))
@@ -221,7 +227,23 @@ x = even(center_x + move_right)
 y = even(center_y - move_up)
 x = max(0, min(x, base_w - view_w))
 y = max(0, min(y, base_h - view_h))
-print(f"{base_w} {base_h} {view_w} {view_h} {x} {y}")
+
+# If the crop is already ~output-sized, take a 1:1 window and skip scale.
+# (A 4K JPEG still has to be decoded; this just drops the second copy.)
+snap = 64
+need_scale = True
+crop_w, crop_h, crop_x, crop_y = view_w, view_h, x, y
+if view_w >= out_w and view_h >= out_h and (view_w - out_w) <= snap and (view_h - out_h) <= snap:
+    crop_w, crop_h = out_w, out_h
+    crop_x = even(x + (view_w - out_w) // 2)
+    crop_y = even(y + (view_h - out_h) // 2)
+    crop_x = max(0, min(crop_x, base_w - crop_w))
+    crop_y = max(0, min(crop_y, base_h - crop_h))
+    need_scale = False
+elif view_w == out_w and view_h == out_h:
+    need_scale = False
+
+print(f"{base_w} {base_h} {crop_w} {crop_h} {crop_x} {crop_y} {int(need_scale)} {scaler}")
 PY
 }
 
@@ -285,27 +307,30 @@ cmd_start() {
 
   stop_stream
 
-  local base_w base_h view_w view_h x y
-  read -r base_w base_h view_w view_h x y <<<"$(compute_viewport "$cfg")"
-  local out_w out_h fps scaler mode4k
+  local base_w base_h crop_w crop_h x y need_scale scaler
+  read -r base_w base_h crop_w crop_h x y need_scale scaler <<<"$(compute_viewport "$cfg")"
+  local out_w out_h fps mode4k
   out_w=$(cfg_get "$cfg" outputWidth)
   out_h=$(cfg_get "$cfg" outputHeight)
   fps=$(cfg_get "$cfg" framerate)
-  scaler=$(cfg_get "$cfg" scaler)
   mode4k=$(cfg_get "$cfg" mode4k)
 
-  local input_flags=(-f v4l2 -thread_queue_size 1024)
+  # 8 queued packets is plenty at 30fps; 1024 held hundreds of MB of 4K frames.
+  local input_flags=(-f v4l2 -thread_queue_size 8)
   if [[ $mode4k == True || $mode4k == true ]]; then
     input_flags+=(-input_format mjpeg)
     v4l2-ctl -d "$input" --set-fmt-video=width="$base_w",height="$base_h",pixelformat=MJPG >/dev/null 2>&1 || true
   fi
   input_flags+=(-video_size "${base_w}x${base_h}" -framerate "$fps" -i "$input")
 
-  local vf="crop=${view_w}:${view_h}:${x}:${y},scale=${out_w}:${out_h}:flags=${scaler}:in_range=pc:out_range=pc,format=yuv422p"
+  local vf="crop=${crop_w}:${crop_h}:${x}:${y},format=yuyv422"
+  if [[ $need_scale == 1 ]]; then
+    vf="crop=${crop_w}:${crop_h}:${x}:${y},scale=${out_w}:${out_h}:flags=${scaler}:in_range=pc:out_range=pc,format=yuyv422"
+  fi
 
   : > "$LOG_FILE"
   # New session so a shell / plugin restart does not kill the pipeline.
-  setsid ffmpeg -hide_banner -nostdin -loglevel error \
+  setsid ffmpeg -hide_banner -nostdin -an -loglevel error \
     "${input_flags[@]}" \
     -vf "$vf" \
     -f v4l2 -pix_fmt yuyv422 "$virtual" \

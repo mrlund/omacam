@@ -9,7 +9,7 @@ var DEFAULTS = {
   outputWidth: 1920,
   outputHeight: 1080,
   framerate: 30,
-  scaler: "lanczos"
+  scaler: "bilinear"
 }
 
 function even(n) {

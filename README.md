@@ -111,9 +111,14 @@ You can also drive it from a terminal:
 ## Cost
 
 The plugin does **not** have to run the camera all the time. Enabled QML is
-cheap. **ffmpeg** is not: while Omacam is live it decodes 4K MJPEG, crops,
-Lanczos-scales to 1080p, and writes uncompressed YUYV into the loopback
-device. That is mostly CPU + USB, and it occupies `/dev/video0`.
+cheap. **ffmpeg** is not: while Omacam is live it decodes 4K MJPEG (that is
+most of the CPU), crops, and writes 1080p YUYV into the loopback device. USB
+holds the sensor at 4K; the 3080 does not help — the camera sends JPEG, not
+H.264, and NVDEC could not be used for this stream.
+
+When the crop is already about 1920×1080, scale is skipped (1:1 pixels).
+Otherwise it uses bilinear rather than Lanczos. The frame queue is kept
+small so RSS stays down.
 
 Turn it off between calls. Do not autostart it at login.
 
