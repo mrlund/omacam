@@ -46,8 +46,8 @@ Item {
     var h = previewImage.paintedHeight
     if (w <= 0 || h <= 0) return { x: 0, y: 0, w: 0, h: 0 }
     return {
-      x: (previewStage.width - w) / 2,
-      y: (previewStage.height - h) / 2,
+      x: previewImage.x + (previewImage.width - w) / 2,
+      y: previewImage.y + (previewImage.height - h) / 2,
       w: w,
       h: h
     }
@@ -218,7 +218,6 @@ Item {
       color: root.background
       borderSpec: root.borderSpec
       padding: root.contentMargin
-      clip: true
 
       MouseArea { anchors.fill: parent; onClicked: {} }
 
@@ -257,10 +256,7 @@ Item {
       ColumnLayout {
         id: cardBody
         anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.leftMargin: card.contentLeftInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
+        anchors.margins: Style.spacing.panelPadding
         spacing: Style.spacing.md
 
         RowLayout {
@@ -305,22 +301,20 @@ Item {
           font.pixelSize: Style.font.bodySmall
         }
 
-        Item {
+        Rectangle {
           id: previewStage
           Layout.fillWidth: true
           Layout.fillHeight: true
+          color: "#111"
+          radius: Math.max(8, root.cornerRadius)
+          border.width: 1
+          border.color: root.border
           clip: true
-
-          Rectangle {
-            anchors.fill: parent
-            color: "#111"
-            radius: Math.max(6, root.cornerRadius - 2)
-            clip: true
-          }
 
           Image {
             id: previewImage
             anchors.fill: parent
+            anchors.margins: 1
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: false
@@ -410,21 +404,20 @@ Item {
           Layout.fillWidth: true
           spacing: Style.spacing.md
 
-          BorderSurface {
+          Rectangle {
             id: cropCard
             Layout.fillWidth: true
             Layout.preferredWidth: 1
-            Layout.preferredHeight: cropInner.implicitHeight + cropCard.contentTopInset + cropCard.contentBottomInset
-            radius: Math.max(8, root.cornerRadius - 2)
-            color: Qt.darker(root.background, 1.12)
-            borderSpec: root.borderSpec
-            padding: Style.spacing.md
+            Layout.preferredHeight: cropInner.implicitHeight + Style.spacing.md * 2
+            radius: Math.max(8, root.cornerRadius)
+            color: Qt.rgba(0, 0, 0, 0.22)
+            border.width: 1
+            border.color: root.border
 
             ColumnLayout {
               id: cropInner
-              x: cropCard.contentLeftInset
-              y: cropCard.contentTopInset
-              width: cropCard.width - cropCard.contentLeftInset - cropCard.contentRightInset
+              anchors.fill: parent
+              anchors.margins: Style.spacing.md
               spacing: Style.spacing.sm
 
               Text {
@@ -487,21 +480,20 @@ Item {
             }
           }
 
-          BorderSurface {
+          Rectangle {
             id: pictureCard
             Layout.fillWidth: true
             Layout.preferredWidth: 1
-            Layout.preferredHeight: pictureInner.implicitHeight + pictureCard.contentTopInset + pictureCard.contentBottomInset
-            radius: Math.max(8, root.cornerRadius - 2)
-            color: Qt.darker(root.background, 1.12)
-            borderSpec: root.borderSpec
-            padding: Style.spacing.md
+            Layout.preferredHeight: pictureInner.implicitHeight + Style.spacing.md * 2
+            radius: Math.max(8, root.cornerRadius)
+            color: Qt.rgba(0, 0, 0, 0.22)
+            border.width: 1
+            border.color: root.border
 
             ColumnLayout {
               id: pictureInner
-              x: pictureCard.contentLeftInset
-              y: pictureCard.contentTopInset
-              width: pictureCard.width - pictureCard.contentLeftInset - pictureCard.contentRightInset
+              anchors.fill: parent
+              anchors.margins: Style.spacing.md
               spacing: Style.spacing.sm
 
               Text {
