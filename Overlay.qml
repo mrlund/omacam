@@ -211,13 +211,14 @@ Item {
 
     BorderSurface {
       id: card
-      width: Math.min(Style.space(980), panel.width - Style.gapsOut * 2)
-      height: Math.min(Style.space(780), panel.height - Style.gapsOut * 2)
+      width: Math.min(Style.space(1100), panel.width - Style.gapsOut * 2)
+      height: Math.min(Style.space(820), panel.height - Style.gapsOut * 2)
       radius: root.cornerRadius
       anchors.centerIn: parent
       color: root.background
       borderSpec: root.borderSpec
       padding: root.contentMargin
+      clip: true
 
       MouseArea { anchors.fill: parent; onClicked: {} }
 
@@ -254,7 +255,12 @@ Item {
       }
 
       ColumnLayout {
+        id: cardBody
         anchors.fill: parent
+        anchors.topMargin: card.contentTopInset
+        anchors.leftMargin: card.contentLeftInset
+        anchors.rightMargin: card.contentRightInset
+        anchors.bottomMargin: card.contentBottomInset
         spacing: Style.spacing.md
 
         RowLayout {
@@ -309,6 +315,7 @@ Item {
             anchors.fill: parent
             color: "#111"
             radius: Math.max(6, root.cornerRadius - 2)
+            clip: true
           }
 
           Image {
@@ -398,104 +405,184 @@ Item {
           }
         }
 
-        GridLayout {
+        RowLayout {
+          id: controlRow
           Layout.fillWidth: true
-          columns: 2
-          columnSpacing: Style.spacing.md
-          rowSpacing: Style.spacing.sm
+          spacing: Style.spacing.md
 
-          Text { text: "Zoom " + root.zoom + "%"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body }
-          PanelSlider {
+          BorderSurface {
+            id: cropCard
             Layout.fillWidth: true
-            value: root.zoom
-            minimum: 0
-            maximum: 80
-            step: 1
-            integer: true
-            onMoved: function(v) { root.zoom = Math.round(v); root.clampDraft() }
+            Layout.preferredWidth: 1
+            Layout.preferredHeight: cropInner.implicitHeight + cropCard.contentTopInset + cropCard.contentBottomInset
+            radius: Math.max(8, root.cornerRadius - 2)
+            color: Qt.darker(root.background, 1.12)
+            borderSpec: root.borderSpec
+            padding: Style.spacing.md
+
+            ColumnLayout {
+              id: cropInner
+              x: cropCard.contentLeftInset
+              y: cropCard.contentTopInset
+              width: cropCard.width - cropCard.contentLeftInset - cropCard.contentRightInset
+              spacing: Style.spacing.sm
+
+              Text {
+                text: "Crop"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+              }
+
+              GridLayout {
+                Layout.fillWidth: true
+                columns: 2
+                columnSpacing: Style.spacing.md
+                rowSpacing: Style.spacing.sm
+
+                Text { text: "Zoom " + root.zoom + "%"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body }
+                PanelSlider {
+                  Layout.fillWidth: true
+                  value: root.zoom
+                  minimum: 0
+                  maximum: 80
+                  step: 1
+                  integer: true
+                  onMoved: function(v) { root.zoom = Math.round(v); root.clampDraft() }
+                }
+
+                Text { text: "Move right " + root.moveRight + "px"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body }
+                PanelSlider {
+                  Layout.fillWidth: true
+                  value: root.moveRight
+                  minimum: -root.view.maxMoveRight
+                  maximum: root.view.maxMoveRight
+                  step: 2
+                  integer: true
+                  onMoved: function(v) { root.moveRight = Math.round(v); root.clampDraft() }
+                }
+
+                Text { text: "Move up " + root.moveUp + "px"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body }
+                PanelSlider {
+                  Layout.fillWidth: true
+                  value: root.moveUp
+                  minimum: -root.view.maxMoveUp
+                  maximum: root.view.maxMoveUp
+                  step: 2
+                  integer: true
+                  onMoved: function(v) { root.moveUp = Math.round(v); root.clampDraft() }
+                }
+              }
+
+              Text {
+                Layout.fillWidth: true
+                text: "Viewport " + root.view.w + "×" + root.view.h + " at +" + root.view.x + "," + root.view.y + "  →  1920×1080"
+                color: root.foreground
+                opacity: 0.55
+                wrapMode: Text.WordWrap
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
           }
 
-          Text { text: "Move right " + root.moveRight + "px"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body }
-          PanelSlider {
+          BorderSurface {
+            id: pictureCard
             Layout.fillWidth: true
-            value: root.moveRight
-            minimum: -root.view.maxMoveRight
-            maximum: root.view.maxMoveRight
-            step: 2
-            integer: true
-            onMoved: function(v) { root.moveRight = Math.round(v); root.clampDraft() }
-          }
+            Layout.preferredWidth: 1
+            Layout.preferredHeight: pictureInner.implicitHeight + pictureCard.contentTopInset + pictureCard.contentBottomInset
+            radius: Math.max(8, root.cornerRadius - 2)
+            color: Qt.darker(root.background, 1.12)
+            borderSpec: root.borderSpec
+            padding: Style.spacing.md
 
-          Text { text: "Move up " + root.moveUp + "px"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body }
-          PanelSlider {
-            Layout.fillWidth: true
-            value: root.moveUp
-            minimum: -root.view.maxMoveUp
-            maximum: root.view.maxMoveUp
-            step: 2
-            integer: true
-            onMoved: function(v) { root.moveUp = Math.round(v); root.clampDraft() }
-          }
+            ColumnLayout {
+              id: pictureInner
+              x: pictureCard.contentLeftInset
+              y: pictureCard.contentTopInset
+              width: pictureCard.width - pictureCard.contentLeftInset - pictureCard.contentRightInset
+              spacing: Style.spacing.sm
 
-          Text {
-            text: "Brightness " + root.brightness + (root.backendTag("brightness") ? " (" + root.backendTag("brightness") + ")" : "")
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-          PanelSlider {
-            Layout.fillWidth: true
-            value: root.brightness
-            minimum: -100
-            maximum: 100
-            step: 1
-            integer: true
-            onMoved: function(v) { root.brightness = Math.round(v); root.commitImage() }
-            onReleased: function(v) { root.brightness = Math.round(v); root.commitImage() }
-          }
+              Text {
+                text: "Picture"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+              }
 
-          Text {
-            text: "Contrast " + root.contrast + (root.backendTag("contrast") ? " (" + root.backendTag("contrast") + ")" : "")
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-          PanelSlider {
-            Layout.fillWidth: true
-            value: root.contrast
-            minimum: -100
-            maximum: 100
-            step: 1
-            integer: true
-            onMoved: function(v) { root.contrast = Math.round(v); root.commitImage() }
-            onReleased: function(v) { root.contrast = Math.round(v); root.commitImage() }
-          }
+              GridLayout {
+                Layout.fillWidth: true
+                columns: 2
+                columnSpacing: Style.spacing.md
+                rowSpacing: Style.spacing.sm
 
-          Text {
-            text: "Saturation " + root.saturation + (root.backendTag("saturation") ? " (" + root.backendTag("saturation") + ")" : "")
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-          PanelSlider {
-            Layout.fillWidth: true
-            value: root.saturation
-            minimum: -100
-            maximum: 100
-            step: 1
-            integer: true
-            onMoved: function(v) { root.saturation = Math.round(v); root.commitImage() }
-            onReleased: function(v) { root.saturation = Math.round(v); root.commitImage() }
-          }
-        }
+                Text {
+                  text: "Brightness " + root.brightness + (root.backendTag("brightness") ? " (" + root.backendTag("brightness") + ")" : "")
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                PanelSlider {
+                  Layout.fillWidth: true
+                  value: root.brightness
+                  minimum: -100
+                  maximum: 100
+                  step: 1
+                  integer: true
+                  onMoved: function(v) { root.brightness = Math.round(v); root.commitImage() }
+                  onReleased: function(v) { root.brightness = Math.round(v); root.commitImage() }
+                }
 
-        Text {
-          Layout.fillWidth: true
-          text: "Viewport " + root.view.w + "×" + root.view.h + " at +" + root.view.x + "," + root.view.y + "  →  1920×1080"
-          color: root.foreground
-          opacity: 0.6
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
+                Text {
+                  text: "Contrast " + root.contrast + (root.backendTag("contrast") ? " (" + root.backendTag("contrast") + ")" : "")
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                PanelSlider {
+                  Layout.fillWidth: true
+                  value: root.contrast
+                  minimum: -100
+                  maximum: 100
+                  step: 1
+                  integer: true
+                  onMoved: function(v) { root.contrast = Math.round(v); root.commitImage() }
+                  onReleased: function(v) { root.contrast = Math.round(v); root.commitImage() }
+                }
+
+                Text {
+                  text: "Saturation " + root.saturation + (root.backendTag("saturation") ? " (" + root.backendTag("saturation") + ")" : "")
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                PanelSlider {
+                  Layout.fillWidth: true
+                  value: root.saturation
+                  minimum: -100
+                  maximum: 100
+                  step: 1
+                  integer: true
+                  onMoved: function(v) { root.saturation = Math.round(v); root.commitImage() }
+                  onReleased: function(v) { root.saturation = Math.round(v); root.commitImage() }
+                }
+              }
+
+              Button {
+                text: "Reset picture"
+                foreground: root.foreground
+                bordered: true
+                onClicked: {
+                  root.brightness = 0
+                  root.contrast = 0
+                  root.saturation = 0
+                  root.commitImage()
+                }
+              }
+            }
+          }
         }
 
         RowLayout {
@@ -507,18 +594,6 @@ Item {
             foreground: root.foreground
             bordered: true
             onClicked: root.dismiss()
-          }
-
-          Button {
-            text: "Reset picture"
-            foreground: root.foreground
-            bordered: true
-            onClicked: {
-              root.brightness = 0
-              root.contrast = 0
-              root.saturation = 0
-              root.commitImage()
-            }
           }
 
           Button {
